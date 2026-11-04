@@ -1,0 +1,21 @@
+\begin{table}[t]
+\centering
+\caption{\textbf{Ablation study of whether using text embedding normalization and the learnable scale factor initialization. (\enze{we have fig4 and no longer need it.})}}
+\label{tab:results}{
+\resizebox{0.7\linewidth}{!}{
+\begin{tabular}{cccccc}
+\toprule
+\textbf{Text Embed Norm} & \textbf{Scale Factor} & \textbf{Train Step} & \textbf{FID} & \textbf{Clip Score} \\
+\midrule
+$\times$ & - & - & NaN & NaN \\
+\multirow{2}{*}{$\checkmark$} & 1 & \multirow{2}{*}{16k} & 24.5 & 20.7 \\
+ & 0.01 &  & 24.4 & 21.9 \\
+\multirow{2}{*}{$\checkmark$} & 1 & \multirow{2}{*}{34k} & 14.6 & 23.5 \\
+ & 0.01 &  & 13.1 & 24.3 \\
+\multirow{2}{*}{$\checkmark$} & 1 & \multirow{2}{*}{52k} & 11.8 & 24.2 \\
+ & 0.01 &  & 10.9 & 24.9 \\
+\bottomrule
+\end{tabular}
+}
+}
+\end{table}

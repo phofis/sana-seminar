@@ -1,0 +1,16 @@
+\begin{table}[th]
+    \centering
+    \caption{\textbf{\footnotesize Comparison of different training schedules. 120K steps, 256px.}}
+    \label{tab:sampling_schedules}
+    \resizebox{0.3\linewidth}{!}{ 
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{Schedule} & \textbf{FID} & \textbf{CLIP} \\
+        \midrule
+        DDPM & 19.5 & 24.6 \\
+        Flow Matching & 16.9 & 25.7 \\
+        \bottomrule
+    \end{tabular}
+    }
+    \vspace{-1em}
+\end{table}

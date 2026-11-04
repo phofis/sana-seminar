@@ -1,0 +1,124 @@
+\section{Full Related Work}
+
+\noindent \textbf{Efficient Diffusion Transformers.}
+The introduction of Diffusion Transformers (DiT) \citep{peebles2023scalable} marked a significant shift in image generation models, replacing the traditional U-Net architecture with a transformer-based approach. This innovation paved the way for more efficient and scalable diffusion models. Building upon DiT, PixArt-$\alpha$ \citep{chenpixart} extended the concept to text-to-image generation, demonstrating the versatility of transformer-based diffusion models. Stable Diffusion 3 (SD3) \citep{esser2024scaling} further advanced the field by proposing the Multi-modal Diffusion Transformer (MM-DiT), which effectively integrates text and image modalities. More recently, Flux \citep{FLUX} showcased the potential of DiT architectures in high-resolution image generation by scaling up to 12B parameters. In addition, earlier works like CAN \citep{cai2024condition} and DiG~\citep{zhu2024dig} explored linear attention mechanisms in class-condition image generation. Several works are also related to modifying the model configuration, e.g., diffusion without attention~\citep{yan2024diffusion, teng2024dim} and cascade model structures~\citep{pernias2023wuerstchen, ren2024ultrapixel,tian2024u}.
+
+
+\noindent \textbf{Text Encoders in Image Generation.}
+The evolution of text encoders in image generation models has significantly impacted the field's progress. Initially, Latent Diffusion Models (LDM) \citep{rombach2022high} adopted OpenAI's CLIP as the text encoder, leveraging its pre-trained visual-linguistic representations. A paradigm shift occurred with the introduction of Imagen \citep{saharia2022photorealistic}, which employed the T5-XXL language model as its text encoder, demonstrating superior text understanding and generation capabilities. Subsequently, eDiff-I \citep{balaji2022ediff} proposed a hybrid approach, ensemble T5-XXL, and CLIP encoders to combine their respective strengths in language comprehension and visual-textual alignment. Recent advancements, such as Playground v3 \citep{li2024playground}, have explored the use of decoder-only Large Language Models (LLMs) as text encoders, potentially offering more nuanced text understanding and generation. This trend towards more sophisticated text encoders reflects the ongoing pursuit of improved text-to-image alignment and generation quality in the field.
+
+\noindent \textbf{On Device Deployment.}
+Several studies have explored post-training quantization (PTQ) techniques to optimize diffusion model inference for edge devices. Research in this area has focused on calibration objectives and data acquisition methods. BRECQ \citep{li2021brecq} incorporates Fisher information into the objective function. ZeroQ \citep{Cai2020ZeroQAN} uses distillation to generate proxy input images for PTQ. SQuant \citep{Guo2022SQuantOD} employs random samples with objectives based on Hessian spectrum sensitivity. Recent work such as Q-Diffusion \citep{li2023qdiffusion} has achieved high-quality generation using only 4-bit weights. In our work, we choose W8A8 to reduce peak memory usage.
+
+
+\section{More Implementation Details}
+
+\noindent \textbf{Rectified-Flow vs. DDPM.}
+In our theoretical analysis, we investigate the reasons behind the fast convergence of flow-matching methods, demonstrating that both 1st flow-matching and EDM models rely on similar formulations. Unlike DDPMs, which use noise prediction, flow-matching and EDM focus on data or velocity prediction, resulting in improved performance and faster convergence. This shift from noise prediction to data prediction is particularly critical at $t = T$, where noise prediction tends to be unstable and leads to cumulative errors. As noted by \cite{balaji2022ediff}, attention activation near $t = T$ grows stronger, highlighting the necessity of accurate predictions at this key moment in the sampling process.
+
+As discussed in ~\cite{lu2023reverse}, the behavior of diffusion models near $t = T$ reveals that when t $\approx$ T, the data distribution resembles noise, and noise prediction approaches randomness. The challenge arises because the errors made at $t = T$ propagate through all subsequent sampling steps, making it crucial for the sampler to be particularly precise near this time step.
+Based on Tweedie’s formula, the gradient of the log density at time $t$, $\nabla_{\mathbf{x}_t} \log q_t(\mathbf{x}_t)$, is approximated by:
+
+\begin{equation}
+  \nabla_{\mathbf{x}_t} \log q_t(\mathbf{x}_t) = -\frac{\mathbf{x}_t - \alpha_t \mathbb{E}{q_{0t(\mathbf{x}_0 \mid \mathbf{x}_t)}}[\mathbf{x}_0]}{\sigma_t^2}.
+  \label{eq:eq1}
+\end{equation}
+When $t \approx T$, $\mathbf{x}_0$ and $\mathbf{x}_t$ become conditionally independent, leading to $q_{0t}(\mathbf{x}_0 \mid \mathbf{x}_t) \approx q_0(\mathbf{x}_0)$. Consequently, the noise prediction model’s optimal solution becomes:
+\begin{equation}
+  \epsilon_\theta(\mathbf{x}_t, t) \approx -\sigma_t \nabla_{\mathbf{x}_t} \log q_t(\mathbf{x}_t) \approx \frac{\mathbf{x}_t - \alpha_t \mathbb{E}_{q_0(\mathbf{x}_0)}[\mathbf{x}_0]}{\sigma_t}.
+  \label{eq:eq2}
+\end{equation}
+Since $\mathbb{E}_{q_0(\mathbf{x}_0)}[\mathbf{x}_0]$ is independent of $\mathbf{x}_t$, the noise prediction model simplifies to a linear function of $\mathbf{x}_t$. However, as discussed in Section 5.2.1, this additional linearity can result in more accumulated errors during sampling, explaining why the original DPM-Solver struggles with guided sampling in such cases.
+
+To address this issue and improve stability, DPM-Solver~\citep{lu2022dpm} proposes modifying the noise prediction model to a more stable parameterization. By subtracting all linear terms inspired by equation~\ref{eq:eq2}, the remaining term is proportional to $\mathbb{E}_{q_0(\mathbf{x}_0)}[\mathbf{x}_0]$, corresponding to the data prediction model. Specifically, when $t \approx T$, the data prediction model approximates a constant:
+\begin{equation}
+  \mathbf{x}_\theta(\mathbf{x}_t, t) \approx \frac{\mathbf{x}_t + \sigma_t^2 \nabla_{\mathbf{x}_t} \log q_t(\mathbf{x}_t)}{\alpha_t} \approx \mathbb{E}_{q_0(\mathbf{x}_0)}[\mathbf{x}_0].
+  \label{eq:eq3}
+\end{equation}
+Thus, for $t \approx T$, the data prediction model becomes approximately constant, and the discretization error for integrating this constant is significantly smaller than for the linear noise prediction model. This insight guides our development of an improved Flow-DPM-Solver based on DPM-Solver++~\citep{lu2022dpm_add}, which adapts a velocity prediction model \model{} to a data prediction one, enhancing performance for guided sampling.
+
+\noindent \textbf{Flow-based DPM-Solver Algorithm.}
+We present the rectified flow-based DPM-Solver sampling process in Algorithm~\ref{alg:flow_dpm_solver}. This modified algorithm incorporates several key changes: hyper-parameter and time-step transformations, as well as model output transformations. These adjustments are highlighted in blue to differentiate them from the original solver.
+
+In addition to improvements in FID and CLIP-Score, which are shown in Figure~8 of the main paper, our Flow-DPM-Solver also demonstrates superior convergence speed and stability compared to the Flow-Euler sampler. As illustrated in Figure~\ref{fig:flow_sampler_compare}, Flow-DPM-Solver retains the strengths of the original DPM-Solver, converging in only 10-20 steps to produce stable, high-quality images. By comparison, the Flow-Euler sampler typically requires 30-50 steps to reach a stable result.
+
+
+\input{tables/flow_dpms}
+
+
+\input{figures_latext/appendix_flowsampler_compare_vis}
+
+\input{figures_latext/appendix_sample_with_mulcap}
+
+\input{figures_latext/ablation_ae_compare}
+
+\noindent \textbf{Multi-Caption Auto-labeling Pipeline.}
+In Figure~\ref{fig:sample_with_mulcap}, we present the results of our CLIP-Score-based multi-caption auto-labeling pipeline, where each image is paired with its original prompt and 4 captions generated by different powerful VLMs. These captions complement each other, enhancing semantic alignment through their variations.
+
+
+\noindent \textbf{Triton Acceleration Training/Inference Detail.}
+This section describes how to accelerate the training inference with kernel fusion using Triton.
+Specifically, for the forward pass, the ReLU activations are fused to the end of QKV projection, the precision conversions and padding operations are fused to the start of KV and QKV multiplications, and the divisions are fused to the end of QKV multiplication. For the backward pass, the divisions are fused to the end of the output projection, and the precision conversions and ReLU activations are fused to the end of KV and QKV multiplications.
+
+\noindent \textbf{2K/4K fine-tuning.}
+We reintroduce Positional Encoding~(PE) to improve performance during the fine-tuning of 2K models on top of 1K models. For fine-tuning 4K models based on 2K models, we apply the same PE interpolation strategy used in \cite{chen2024pixart}. The training process with the addition of positional encoding (PE) converges remarkably quickly, typically within just 10K iterations.
+
+
+
+\section{More Results}
+
+\noindent \textbf{Comparison Between Autoencoders}
+Figure~\ref{fig:ae_compare} illustrates the visual differences between the original images and the reconstructions generated by two distinct models: our DC-AE-F32C32~\citep{chen2024deep} and SDXL’s VAE-F8C4. Both models deliver reconstructions nearly indistinguishable from the original images, showcasing their powerful encoding and decoding capabilities.
+
+\noindent \textbf{Ablation on \model Blocks.} Table~\ref{tab:appendix_blocks_ablation} describes how different block designs affect performance. Directly switching from DiT’s self-attention to linear attention will result in FID and Clip Score performance loss, but adding Mix-FFN can compensate for the performance loss. Adding triton kernel fusion can speed up training/inference without negatively impacting performance.
+
+\noindent \textbf{Complex Human Instruction Analysis.}
+To observe the effectiveness of CHI, we input the user prompt with/without CHI into Gemma-2. We believe a strong positive correlation exists between LLM output and text embedding quality. 
+As shown in Figure~\ref{fig:chi_output}, without CHI, although Gemma-2 can understand the meaning of the input, the output is conversational and does not focus on understanding the user prompt itself. After adding CHI, Gemma-2's output is better focused on understanding and enhancing the details of the user prompt.
+
+\noindent \textbf{Detailed Results on DPG-Bench, GenEval and ImageReward.}
+As an extension of Table.~7 in the main paper, we show all the metric details of GenEval, DPG-Bench, and ImageReward for reference in Table~\ref{tab:geneval_details} and Table~\ref{tab:dpgbench_imagereward_details} respectively.
+
+\noindent \textbf{Finding: Zero-shot Language Transfer Ability.}
+As shown in Figure~\ref{fig:zero_shot}, we were surprised to find that by using Gemma-2 as the text encoder and Chinese/Emoji expressions as text prompts; our \model can also understand and generate corresponding images. Note that we filter out all prompts other than English during training, so Gemma-2 brings the zero-shot generation capability of Chinese/Emoji. 
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.9\textwidth]{figures/chi_case.pdf}
+    \caption{Illustration of Gemma-2's output with/without complex human instruction, and the full prompt of our complex human instruction.}
+    \label{fig:chi_output}
+    % \vspace{-1em}
+\end{figure}
+
+\input{tables/appendix_metrics_details}
+
+
+\input{figures_latext/appendix_zero_shot}
+
+
+\input{tables/appendx_block_design_space}
+
+
+\input{tables/appendix_text_encoder_speed}
+
+
+\noindent \textbf{Detailed Speed Comparison of Text Encoder.} In Table~\ref{tab:appendix_text_encoder_speed}, we compare the latency and parameters for various T5 models alongside the Gemma models. Notably, the Gemma-2B model exhibits a similar latency to T5-large while significantly increasing the model size. This enhancement in model size is a key factor in achieving improved capabilities with greater efficiency.
+
+\noindent \textbf{Detailed Speed Comparison of Diffusion Model.} In Table~\ref{tab:detail_speed}, we compare the throughput and latency of the mainstream DiT-based text-to-image method and our model in detail and test them at resolutions of 512, 1024, 2048, and 4096, respectively. Our \model is far ahead of other methods at different resolutions. As the resolution increases, the efficiency advantage of our \model becomes more significant.
+
+\noindent \textbf{More Visualization Images.}
+As shown in Figure~\ref{fig:4k_1k_vs}, we can see that 4K images can directly generate more details than 1k images.
+In Figure~\ref{fig:more_samples}, we show more images generated by our model with various prompts.
+We also provide a video mp4 demo in the supplementary material (zip file) to show that \model{} is deployed on a laptop.
+
+\input{tables/appendix_speed_compare_sotas}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.99\linewidth]{figures/4k_1k_compare.pdf}
+    \caption{Comparison of 4K and 1K resolution images. We can see that the 4K image contains more details.}
+    \label{fig:4k_1k_vs}
+    \vspace{-1em}
+\end{figure}
+
+\input{figures_latext/appendix_sana_vis}

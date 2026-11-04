@@ -1,0 +1,5 @@
+\section{Conclusion}
+
+This paper builds a new efficient text-to-image pipeline named \model. We have made improvements in the following dimensions: we propose a deep compression autoencoder, widely use linear attention to replace self-attention in DiT, utilize decoder-only LLM as text encoder with complex human instruction, establish an automatic image caption pipeline, and propose flow-based DPM-Solver to accelerate sampling. \model can generate images at a maximum resolution of 4096$\times$4096, delivering throughput more than 100$\times$ higher than the SOTA methods while maintaining competitive generation results.
+
+In the future, we will consider building an efficient video generation pipeline based on \model. A potential limitation of this work is that it cannot fully guarantee the safety and controllability of the generated image content. Additionally, challenges remain in certain complex cases, such as text rendering and the generation of faces and hands.

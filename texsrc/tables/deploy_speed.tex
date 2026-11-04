@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+\centering
+\captionof{table}{\textbf{On-device Deployment}: our inference engine with W8A8 quantization realized a 2.4$\times$ speedup when generating 1024px images on the laptop GPU. The performance of \model{} is assessed with the CLIP-Score on MJHQ-30K~\citep{li2024playground} and the Image-Reward~\citep{xu2024imagereward} on its first 1K images.}
+\vspace{-1em}
+\label{table:quantization}
+\scalebox{0.8}{
+\begin{tabular}{lccc}
+\toprule
+\textbf{Methods} & \textbf{Latency~(s)} & \textbf{CLIP-Score}$~\uparrow$ & \textbf{Image-Reward}$~\uparrow$ \\
+\midrule
+\model~(FP16) & 0.88 & 28.5 & 1.03 \\
+~~~~+ W8A8 Quantization & 0.37 & 28.3 & 0.96 \\
+\bottomrule
+\end{tabular}
+}
+\end{table}

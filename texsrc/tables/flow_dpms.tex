@@ -1,0 +1,24 @@
+\begin{algorithm}[htbp]
+    \small
+    \caption{Flow-DPM-Solver (Modified from DPM-Solver++)}
+    \label{alg:flow_dpm_solver}
+    \begin{algorithmic}[1]
+        \Require initial value $x_T$, time steps $\{t_i\}_{i=0}^M$, data prediction model $x_\theta$, \textcolor{blue}{velocity prediction model $v_\theta$}, \textcolor{blue}{time-step shift factor $s$}
+        \State Denote $h_i := \lambda_{t_i} - \lambda_{t_{i-1}}$ for $i = 1, \dots, M$
+        \State \textcolor{blue}{$\tilde{\sigma}_{t_i} = \frac{s \cdot \sigma_{t_i}}{1 + (s - 1) \cdot \sigma_{t_i}}$}, \textcolor{blue}{$\alpha_{t_i} = 1 - \tilde{\sigma}_{t_i}$} \Comment{Hyper-parameter and Time-step transformation}
+        \State \textcolor{blue}{$x_\theta(\tilde{x}_{t_i}, t_i) = \tilde{x}_{t_i} - \tilde{\sigma}_{t_i} v_\theta(\tilde{x}_{t_i}, t_i)$} \Comment{Model output transformation}
+        \State $\tilde{x}_{t_0} \gets x_T$. Initialize an empty buffer $Q$.
+        \State $Q_{\text{buffer}} \gets x_\theta(\tilde{x}_{t_0}, t_0)$
+        \State $\tilde{x}_{t_1} \gets \frac{\tilde{\sigma}_{t_1}}{\tilde{\sigma}_{t_0}} \tilde{x}_{t_0} - \alpha_{t_1} \left( e^{-h_1} - 1 \right) x_\theta(\tilde{x}_{t_0}, t_0)$
+        \State $Q_{\text{buffer}} \gets x_\theta(\tilde{x}_{t_1}, t_1)$
+        \For{$i = 2$ to $M$}
+            \State $r_i \gets \frac{h_{i-1}}{h_i}$
+            \State $D_i \gets \left( 1 + \frac{1}{2r_i} \right) x_\theta(\tilde{x}_{t_{i-1}}, t_{i-1}) - \frac{1}{2r_i} x_\theta(\tilde{x}_{t_{i-2}}, t_{i-2})$
+            \State $\tilde{x}_{t_i} \gets \frac{\tilde{\sigma}_{t_i}}{\tilde{\sigma}_{t_{i-1}}} \tilde{x}_{t_{i-1}} - \alpha_{t_i} \left( e^{-h_i} - 1 \right) D_i$
+            \If{$i < M$}
+                \State $Q_{\text{buffer}} \gets x_\theta(\tilde{x}_{t_i}, t_i)$
+            \EndIf
+        \EndFor
+        \State \Return $\tilde{x}_{t_M}$
+    \end{algorithmic}
+\end{algorithm}

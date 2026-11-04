@@ -1,0 +1,6 @@
+\section{Related Work}
+
+We put a relatively brief overview of related work in the main text, with a more comprehensive version available in the supplementary material. In terms of generative model architecture, Diffusion Transformer~\citep{Peebles2022DiT} and DiT-based Text-to-image extensions~\citep{chenpixart,esser2024scaling,FLUX} have made significant progress over the past year. 
+Regarding text encoder, the earliest work~\citep{rombach2022high} uses CLIP, while subsequent works~\citep{saharia2022photorealistic,chenpixart,chen2024pixart} adopt T5-XXL. There are also efforts that combine T5 and CLIP~\citep{balaji2022ediff,esser2024scaling}.
+For high-resolution generation, PixArt-$\Sigma$~\citep{chen2024pixart} is the first model capable of directly generating images at 4K resolution. Additionally, GigaGAN~\citep{kang2023scaling} can generate 4K images using a super-resolution model. 
+In the context of on-device deployment, \cite{zhao2023mobilediffusion,li2024snapfusion} have explored the deployment of diffusion models on mobile devices.

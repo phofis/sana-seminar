@@ -1,0 +1,24 @@
+{
+  "name": "sem",
+  "version": "1.0.0",
+  "description": "SANA seminar Reveal.js deck",
+  "type": "module",
+  "scripts": {
+    "serve": "python3 -m http.server 8765",
+    "screenshots": "node scripts/capture-slides.mjs",
+    "render-figure": "node scripts/render-pdf-figure.mjs",
+    "render-pipeline": "node scripts/render-mermaid.mjs",
+    "render-chi": "node scripts/render-pdf-figure.mjs texsrc/figures/CHI.pdf assets/fig-chi.png 3.5",
+    "postinstall": "playwright install chromium"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "@mermaid-js/mermaid-cli": "^12.2.0",
+    "@napi-rs/canvas": "^1.1.0",
+    "mermaid": "^12.3.0",
+    "pdfjs-dist": "^6.5.438",
+    "playwright": "^1.64.1"
+  }
+}

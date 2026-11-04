@@ -1,0 +1,34 @@
+\begin{table}[htbp]
+    \centering
+    \caption{Comparison of throughput and latency under different resolutions. All models tested on an A100 GPU with FP16 precision.}
+    \label{tab:detail_speed}
+    \small
+    \scalebox{0.8}{
+    \begin{tabular}{llcc|llcc}
+    \toprule
+    Methods & Speedup & Throughput(/s) & Latency(ms) & Methods & Speedup & Throughput(/s) & Latency(ms) \\
+    \midrule
+    \multicolumn{4}{c|}{512$\times$512 Resolution} & \multicolumn{4}{c}{1024$\times$1024 Resolution} \\
+    \midrule
+    SD3 & 7.6x & 1.14 & 1.4 & SD3 & 7.0x & 0.28 & 4.4 \\
+    FLUX-schnell & 10.5x & 1.58 & 0.7 & FLUX-schnell & 12.5x & 0.50 & 2.1 \\
+    FLUX-dev & 1.0x & 0.15 & 7.9 & FLUX-dev & 1.0x & 0.04 & 23 \\
+    PixArt-$\Sigma$ & 10.3x & 1.54 & 1.2 & PixArt-$\Sigma$ & 10.0x & 0.40 & 2.7 \\
+    HunyuanDiT & 1.3x & 0.20 & 5.1 & HunyuanDiT & 1.2x & 0.05 & 18 \\
+    \textbf{\model-0.6B} & 44.5x & 6.67 & 0.8 & \textbf{\model-0.6B} & 43.0x & 1.72 & 0.9 \\
+    \textbf{\model-1.6B} & 25.6x & 3.84 & 0.6 & \textbf{\model-1.6B} & 25.2x & 1.01 & 1.2 \\
+    \midrule
+    \multicolumn{4}{c|}{2048$\times$2048 Resolution} & \multicolumn{4}{c}{4096$\times$4096 Resolution} \\
+    \midrule
+    SD3 & 5.0x & 0.04 & 22 & SD3 & 4.0x & 0.004 & 230 \\
+    FLUX-schnell & 11.2x & 0.09 & 10.5 & FLUX-schnell & 13.0x & 0.013 & 76 \\
+    FLUX-dev & 1.0x & 0.008 & 117 & FLUX-dev & 1.0x & 0.001 & 1023 \\
+    PixArt-$\Sigma$ & 7.5x & 0.06 & 18.1 & PixArt-$\Sigma$ & 5.0x & 0.005 & 186 \\
+    HunyuanDiT & 1.2x & 0.01 & 96 & HunyuanDiT & 1.0x & 0.001 & 861 \\
+    \textbf{\model-0.6B} & 53.8x & 0.43 & 2.5 & \textbf{\model-0.6B} & 104.0x & 0.104 & 9.6 \\
+    \textbf{\model-1.6B} & 31.2x & 0.25 & 4.1 & \textbf{\model-1.6B} & 66.0x & 0.066 & 5.9 \\
+    \bottomrule
+    \end{tabular}
+    }
+    \end{table}
+    

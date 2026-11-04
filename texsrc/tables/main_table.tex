@@ -1,0 +1,45 @@
+\begin{table}[t]
+    \centering
+    \caption{\textbf{Comprehensive comparison of our method with SOTA approaches in efficiency and performance.}
+    The speed is tested on one A100 GPU with FP16 Precision.
+    Throughput: Measured with batch=16.
+    Latency: Measured with batch=1 and sampling step=20.
+    We highlight the \textbf{best}, \underline{second best}, and \textit{third best} entries.}
+    % \vspace{1ex}
+    \vspace{-0.5em}
+    \label{tab:main_comparison}{
+    \scalebox{0.74}{
+    \begin{tabular}{lcccccccc}
+    \toprule
+    \multirow{2}{*}{\textbf{Methods}} & \textbf{Throughput} & \textbf{Latency} & \textbf{Params} & \multirow{2}{*}{\textbf{Speedup}} & \multirow{2}{*}{\textbf{FID~$\downarrow$}} & \multirow{2}{*}{\textbf{CLIP~$\uparrow$}} & \multirow{2}{*}{\textbf{GenEval~$\uparrow$}} & \multirow{2}{*}{\textbf{DPG~$\uparrow$}} \\
+    & \textbf{(samples/s)} & \textbf{(s)} & \textbf{(B)} &  &  &  &  &  \\
+    \midrule
+    \multicolumn{9}{l}{\textbf{512 \boldmath$\times$\unboldmath 512 resolution}} \\
+    \midrule
+    PixArt-$\alpha$~\citep{chenpixart} & 1.5 & 1.2 & 0.6 & 1.0$\times$ & 6.14 & 27.55 & 0.48 & 71.6 \\
+    PixArt-$\Sigma$~\citep{chen2024pixart} & 1.5 & 1.2 & 0.6 & 1.0$\times$ & \textit{6.34} & \textit{27.62} & \textit{0.52} & \textit{79.5} \\
+    \midrule
+    \textbf{\model{}-0.6B} & 6.7 & 0.8 & 0.6 & 5.0$\times$ & \underline{5.67} & \underline{27.92} & \underline{0.64} & \underline{84.3} \\
+    \textbf{\model{}-1.6B} & 3.8 & 0.6 & 1.6 & 2.5$\times$ & \textbf{5.16} & \textbf{28.19} & \textbf{0.66} & \textbf{85.5} \\
+    \toprule
+    \toprule
+    \multicolumn{9}{l}{\textbf{1024 \boldmath$\times$\unboldmath 1024 resolution}} \\
+    \midrule
+    LUMINA-Next~\citep{zhuo2024lumina}      & 0.12  & 9.1   & 2.0   & 2.8$\times$     & 7.58              & 26.84             & 0.46              & 74.6 \\
+    SDXL~\citep{podell2023sdxl}             & 0.15  & 6.5   & 2.6   & 3.5$\times$     & 6.63              & \underline{29.03} & 0.55              & 74.7 \\
+    PlayGroundv2.5~\citep{li2024playground} & 0.21  & 5.3   & 2.6   & 4.9$\times$     & \textit{6.09}     & \textbf{29.13}    & 0.56              & 75.5 \\
+    Hunyuan-DiT~\citep{li2024hunyuan}       & 0.05  & 18.2  & 1.5   & 1.2$\times$     & 6.54              & 28.19             & 0.63              & 78.9 \\ 
+    PixArt-$\Sigma$~\citep{chen2024pixart}  & 0.4   & 2.7   & 0.6   & 9.3$\times$     & 6.15              & 28.26             & 0.54              & 80.5 \\
+    DALLE3~\citep{Dalle-3}                  & -     & -     & -     & -               & -                 & -                 & \underline{0.67}  & 83.5 \\
+    SD3-medium~\citep{esser2024scaling}     & 0.28  & 4.4   & 2.0   & 6.5$\times$     & 11.92             & 27.83             & 0.62              & \underline{84.1} \\
+    FLUX-dev~\citep{FLUX}                   & 0.04  & 23.0  & 12.0  & 1.0$\times$     & 10.15             & 27.47             & \underline{0.67}  & \textit{84.0} \\
+    FLUX-schnell~\citep{FLUX}               & 0.5   & 2.1   & 12.0  & 11.6$\times$    & 7.94              & 28.14             & \textbf{0.71}     & \textbf{84.8} \\
+    \midrule
+    \textbf{\model{}-0.6B}                  & 1.7   & 0.9   & 0.6   & 39.5$\times$    & \underline{5.81}  & 28.36             & 0.64              & 83.6 \\
+    \textbf{\model{}-1.6B}                  & 1.0   & 1.2   & 1.6   & 23.3$\times$    & \textbf{5.76}     & \textit{28.67}    & \textit{0.66}     & \textbf{84.8} \\
+    \bottomrule
+    \end{tabular}
+    }
+    }
+    \vspace{-2em}
+\end{table}

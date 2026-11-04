@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SANA — seminar</title>
+<!-- Present from this directory: python3 -m http.server -->
+<link rel="stylesheet" href="vendor/reveal/dist/reset.css">
+<link rel="stylesheet" href="vendor/reveal/dist/reveal.css">
+<link rel="stylesheet" href="css/seminar.css">
+</head>
+<body>
+<div class="reveal">
+<div class="slides">
+
+<section class="title-slide" id="title">
+  <div class="cols cols-title">
+    <div>
+      <p class="kicker">Piotr Pasula</p>
+      <p class="kicker">Computer Vision and Pattern Recognition</p>
+      <h1>SANA</h1>
+      <p class="lede" style="margin-top:18px">Efficient high-resolution image synthesis with linear diffusion transformers.</p>
+      <p class="title-meta">Enze Xie* and Junsong Chen*, with Junyu Chen, Han Cai, Haotian Tang, Yujun Lin, Zhekai Zhang, Muyang Li, Ligeng Zhu, Yao Lu, and Song Han.<br>NVIDIA, MIT, Tsinghua. arXiv:2410.10629.</p>
+      <div class="figure-embed title-teaser">
+        <iframe
+          scrolling="no"
+          title="Figure 1 in the SANA paper: generated images and inference latency overview"
+          src="texsrc/figures/teaser.pdf#view=FitH&amp;toolbar=0&amp;navpanes=0&amp;scrollbar=0"
+        ></iframe>
+      </div>
+    </div>
+    <div>
+      <div class="frame">
+        <img src="assets/fig-ship.jpg" alt="A generated tall ship in a ring of fire and stars, from the SANA paper samples.">
+      </div>
+      <p class="cap">Sample from the paper. Xie and Chen et al., ICLR 2025.</p>
+    </div>
+  </div>
+  <p class="cap">Figure 1 in the paper: overview of generated images and inference latency.</p>
+  <aside class="notes">
+    Name yourself, Piotr Pasula, and stop. The room is computer-science students with a basic ML background, so motivation will define every symbol before using it. SANA-0.6B has 590 million parameters. On one A100 it produces a 4096 by 4096 image in 9.6 seconds, where FLUX-dev takes 1023 seconds. The picture is one of their samples, not a benchmark. Notes are on S, overview is Esc. Then go to the agenda. Introduction is the first section; do not teach F and P until motivation slide 2.
+  </aside>
+</section>
+
+<section id="agenda">
+  <p class="kicker">Plan</p>
+  <div class="agenda">
+    <div class="ag-row"><div class="topic">Introduction</div><div class="share">The pivotal question, four core designs from the paper</div></div>
+    <div class="ag-row"><div class="topic">Motivation</div><div class="share">Who got huge, then why scaling factor F = 8 and patch size P = 2 break at 4K</div></div>
+    <div class="ag-row"><div class="topic">Method</div><div class="share">Compression, linear attention, Gemma, data, the solver</div></div>
+    <div class="ag-row"><div class="topic">Results</div><div class="share">DiT size &amp; block cost, Table 7 at 1024, 4K latency ladder, laptop</div></div>
+    <div class="ag-row"><div class="topic">Critical reading</div><div class="share">Failure modes, assumptions, three limits</div></div>
+    <div class="ag-row"><div class="topic">Conclusion</div><div class="share">Their 4096 claim, then video, safety, and pictures still hard</div></div>
+    <div class="ag-row"><div class="topic">Discussion</div><div class="share">Linear attention, VAE compression, CHI and intent</div></div>
+  </div>
+  <aside class="notes">
+    Do not read the agenda line by line. The method is the center of the talk, and the results section is where you will refuse the slogan. The 100 times figure is real and narrow: throughput against FLUX-dev at 4K, one A100, FP16. You will put FLUX-schnell on the same slides so the room can see the distilled baseline. The conclusion is their Section 5, after the critique and before the questions. Speaker notes carry the script. Hold questions for the discussion unless someone is lost.
+  </aside>
+</section>
+
+<section id="intro-question">
+  <p class="kicker">Introduction</p>
+  <div class="slide-main">
+    <h2>A pivotal question</h2>
+    <p>Training and inference costs keep rising with model size.</p>
+    <p class="lede" style="margin-top:10px"><em>Can we develop a high-quality and high-resolution image generator that is computationally efficient and runs very fast on both cloud and edge devices?</em></p>
+    <p style="margin-top:12px"><strong>SANA</strong> trains and synthesizes from $1024 \times 1024$ up to $4096 \times 4096$. PixArt-$\Sigma$ is the main prior near 4K, but it is slow there.</p>
+    <div class="figure-embed figure-embed-below">
+      <img
+        src="assets/fig-performance-waterfall.png"
+        alt="Co-design waterfall: 4096×4096 latency from 469s to 9.6s (Figure 2, SANA paper)"
+      >
+    </div>
+  </div>
+  <p class="cap">Figure 2 in the paper: algorithm and system co-design on an A100, batch 1. Their DiT baseline 469s → 9.6s; caption compares 9.6s to FLUX at 106×. You will unpack both denominators in results.</p>
+  <aside class="notes">
+    Welcome everyone. I’m Piotr Pasula, and today we look at SANA, from NVIDIA, MIT, and Tsinghua. Read the italic question once, slowly. It is the same sentence as Section 1 of the paper. Point at the figure below: co-design from 469 seconds down to 9.6 at 4K. The caption says 106 times versus FLUX; motivation will put 1023 seconds on FLUX-dev, and results will separate 469 from 1023. SANA is not one trick; the next slide lists four core designs. PixArt-Sigma is the honest near-4K citation.
+  </aside>
+</section>
+
+<section id="intro-designs">
+  <p class="kicker">Introduction · four core designs</p>
+  <h2>Compression, linear DiT, Gemma, and efficient training.</h2>
+  <div class="stack intro-designs-grid">
+    <div class="cols cols-2-even">
+      <div class="card teal">
+        <h3>Deep compression autoencoder</h3>
+        <p>Mainstream autoencoders use downsampling factor F = 8 (AE-F8). SANA pushes F to 32. That yields 16× fewer latent tokens than AE-F8 alone, which matters for training and for 4K synthesis.</p>
+      </div>
+      <div class="card teal">
+        <h3>Efficient linear DiT</h3>
+        <p>Vanilla DiT self-attention is $\mathcal{O}(N^{2})$. Linear attention replaces it with $\mathcal{O}(N)$. Mix-FFN adds a 3×3 depthwise conv in the MLP for local token mixing. With that design they drop positional embeddings at 1K with no quality loss (NoPE); 2K and 4K finetunes bring sin-cos back.</p>
+      </div>
+    </div>
+    <div class="cols cols-2-even">
+      <div class="card teal">
+        <h3>Decoder-only small LLM as text encoder</h3>
+        <p>Most models still use CLIP or T5. SANA uses Gemma for stronger comprehension and instruction following. They fix training instability from raw LLM states and add complex human instructions (CHI) to improve text–image alignment.</p>
+      </div>
+      <div class="card teal">
+        <h3>Efficient training and inference strategy</h3>
+        <p>Multiple VLMs re-caption each image for diverse captions. A CLIP-score-based rule samples which caption to train on. At inference, Flow-DPM-Solver cuts steps from about 28–50 (Flow-Euler) to 14–20 with better results.</p>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">
+    Walk the four introduction bullets in order. On compression, say 16 times fewer latent tokens versus AE-F8; motivation will define F and P on the next slides, then method separates AE-only from full DiT stride. On linear DiT, cite the 1.7 times speedup at 4K when you get to results. NoPE is the 1K training story; do not imply Mix-FFN alone carries 4K without finetune embeddings. Third bullet: say Gemma-2-2B-IT, frozen, RMSNorm and gamma at 0.01 for stability. CHI is in-context rewriting, not a two-point GenEval story. Fourth bullet: four VLM captions in the full method; clip-score sampling improves convergence. Flow-DPM-Solver is the inference piece. Quantized laptop numbers come in results, not here.
+  </aside>
+</section>
+
+<section id="design-compare">
+  <p class="kicker">Introduction · at a glance</p>
+  <h2>Comparison of earlier architectures.</h2>
+  <table class="grid">
+    <thead>
+      <tr><th>Design choice</th><th>Standard LDM</th><th>FLUX-dev</th><th class="ours">SANA</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Compression</td><td>AE-F8, DiT patch P = 2 (÷16 per side)</td><td>F8C16P2</td><td class="ours">DC-AE F32C32P1 (÷32, P = 1)</td></tr>
+      <tr><td>Self-attention</td><td>Softmax, $\mathcal{O}(N^{2})$</td><td>Softmax</td><td class="ours">ReLU linear, $\mathcal{O}(N)$</td></tr>
+      <tr><td>Text encoder</td><td>CLIP or T5 typical</td><td>T5-XXL class</td><td class="ours">Gemma-2-2B-IT, frozen</td></tr>
+      <tr><td>Positional encoding</td><td>Absolute, learnable, or RoPE</td><td>Same family</td><td class="ours">NoPE at 1K; sin-cos back for 2K / 4K finetune</td></tr>
+      <tr><td>Sampling</td><td>Often 28–50+ steps</td><td>~50 steps (dev)</td><td class="ours">Flow-DPM-Solver, 14–20 steps</td></tr>
+      <tr><td>4K latency</td><td>1023s scale (FLUX-dev class)</td><td>1023s</td><td class="ours">9.6s · SANA-0.6B</td></tr>
+    </tbody>
+    <caption>A100, FP16, batch 1 at $4096 \times 4096$. $1023 / 9.6 \approx 106$ against FLUX-dev only. FLUX-schnell is 76s, about $8\times$ slower than SANA, not 100×. No GenEval or DPG scores exist at 4K in this paper.</caption>
+  </table>
+  <aside class="notes">
+    Bridge into motivation. The table names F, P, and 9.6 seconds before you derive them. Standard latent diffusion means PixArt, SD3, and FLUX-style stacks. When someone divides 1023 by 9.6, insist on FLUX-dev, one A100, FP16, batch 1. Next section is motivation: model sizes, then why the $N \times N$ map hurts at 4K.
+  </aside>
+</section>
+
+<section id="scaling">
+  <p class="kicker">Motivation</p>
+  <h2>Text-to-image quality scaled. So did the models.</h2>
+  <div class="cols cols-2">
+    <div>
+      <p>Latent diffusion has driven text-to-image research and products. Researchers converge on transformers instead of U-Nets, VLM captions, better VAEs and text encoders, and higher resolution.</p>
+      <div class="gloss">
+        <div><b>U-Net</b>Convolutional encoder–decoder with skip connections; the denoiser in classic latent diffusion (e.g. Stable Diffusion 1.x).</div>
+        <div><b>VLM</b>Vision–language model that reads an image and writes a detailed caption; used to enrich or replace short web alt text in training.</div>
+        <div><b>VAE</b>Variational autoencoder that compresses RGB to a smaller latent grid; diffusion runs in that space, then the VAE decodes back to pixels.</div>
+      </div>
+      <p>Parameter counts jumped by more than an order of magnitude. Studios and design tools also want 4K frames, meaning $4096 \times 4096$. That is four times the side length of a $1024 \times 1024$ image, and sixteen times as many pixels. The models in this table hit memory and speed walls there.</p>
+      <p class="note">A diffusion model starts from noise and removes it over many steps. These systems do that work in a compressed latent image, then decode back to pixels.</p>
+    </div>
+    <table class="grid">
+      <thead>
+        <tr><th>Text-to-image model</th><th class="num">Parameters</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>PixArt-α</td><td class="num">0.6B</td></tr>
+        <tr><td>Hunyuan-DiT</td><td class="num">1.5B</td></tr>
+        <tr><td>SD3-Medium</td><td class="num">2.0B</td></tr>
+        <tr><td>FLUX-dev</td><td class="num">12B</td></tr>
+        <tr><td>Playground v3</td><td class="num">24B</td></tr>
+      </tbody>
+      <caption>The introduction also cites SD3 at 8B and LiDiT at 10B as the large end of the race. Later tables use the 2B SD3-Medium checkpoint.</caption>
+    </table>
+  </div>
+  <aside class="notes">
+    You already framed SANA in the introduction. Here deepen the cost story before F and P. Photoreal models exist. PixArt-alpha is 0.6 billion parameters, Hunyuan-DiT is 1.5, SD3-Medium is 2, FLUX-dev is 12, Playground v3 is 24. If you have used FLUX or Stable Diffusion 3, you know 1024 images can look excellent. Four times the side length is 4096, and that is sixteen times the pixels. The next slide is why the transformer then falls over. Hold the slogan. You will earn “under 10 seconds” only after they have seen 65,536 tokens. If someone asks which SD3: the intro’s 8 billion is the big checkpoint, and every benchmark in this talk is SD3-Medium at 2 billion.
+  </aside>
+</section>
+
+<section id="walls">
+  <p class="kicker">Motivation</p>
+  <h2>Standard diffusion transformers build an $N \times N$ map.</h2>
+  <div class="gloss">
+    <div><b>F · downsampling</b>The autoencoder divides each side of the image by F. F = 8 turns a 1024 image into a 128×128 latent.</div>
+    <div><b>P · patch size</b>The diffusion transformer then groups that latent into P×P patches. P = 2 halves each side again.</div>
+    <div><b>N · token count</b>$N = \big(\frac{W}{F \times P} \times \frac{H}{F\times P}\big)$. Usual models use F = 8 and P = 2, so each side is divided by 16.</div>
+  </div>
+  <div class="cols cols-2-even">
+    <div class="card">
+      <h3>$1024 \times 1024$</h3>
+      <p>$1024 / 16 = 64$, so $N = 64^{2} = 4{,}096$ tokens. The attention matrix is $4{,}096 \times 4{,}096$, about 16.7 million entries.</p>
+    </div>
+    <div class="card rust">
+      <h3>$4096 \times 4096$</h3>
+      <p>$4096 / 16 = 256$, so $N = 256^{2} = 65{,}536$ tokens. The matrix is $65{,}536 \times 65{,}536$, which is $4.29 \times 10^{9}$ entries per head.</p>
+    </div>
+  </div>
+  <div class="eq">$$\mathrm{Attention}(Q,K,V)=\mathrm{Softmax}\!\left(\frac{QK^{\top}}{\sqrt{d}}\right)V$$</div>
+  <p class="note">Softmax is a nonlinearity around $QK^{\top}$, so the model has to materialize that $N \times N$ matrix. Memory grows as $\mathcal{O}(N^{2})$. Compute grows as $\mathcal{O}(N^{2} d)$. Sixteen times more tokens is two hundred and fifty-six times more attention.</p>
+  <aside class="notes">
+    Slow down. Read the three definitions off the slide before any arithmetic. F is the autoencoder’s downsampling factor: each side of the picture is divided by F. P is the patch size inside the diffusion transformer: it groups the latent into P by P blocks. A latent diffusion model, an LDM, is a diffusion model that runs on this compressed grid and decodes at the end. A diffusion transformer, a DiT, is that denoiser implemented as a transformer. Standard PixArt, SD3, and FLUX use F = 8 and P = 2, so the stride is 16. 1024 divided by 16 is 64, and 64 squared is 4,096 tokens. 4096 divided by 16 is 256, and 256 squared is 65,536 tokens. Point at the formula. Softmax wraps Q times K-transpose, so you cannot reorder the multiply. You allocate an N by N matrix. At 65,536 tokens that is 4.29 billion entries in every head, in every layer. Memory is order N squared. Compute is order N squared times d, where d is the head dimension. Sixteen times more tokens, from 4,096 to 65,536, makes the attention map 256 times larger, because 16 squared is 256. The text encoder and the sampler are real costs too. Leave them for the method. This slide has one job: the quadratic map.
+  </aside>
+</section>
+
+<section id="failure">
+  <p class="kicker">Motivation</p>
+  <h2>One 4K frame is 17 minutes on an A100.</h2>
+  <p class="note">FP16, batch 1, one NVIDIA A100. The 1023 second figure is FLUX-dev at $4096 \times 4096$.</p>
+  <div class="cols cols-2-even" style="margin-top:8px">
+    <div class="card">
+      <h3>1024 image · manageable</h3>
+      <p>4,096 tokens. Softmax map: 16.7 million entries. A current 1024 generator fits, and it finishes in seconds.</p>
+    </div>
+    <div class="card rust">
+      <h3>4096 image · the map is 8 GB</h3>
+      <p>65,536 tokens. One head’s fp16 matrix is $65{,}536^{2} \times 2$ bytes = 8 GB, before weights and the other heads. A 16 GB laptop GPU cannot allocate it.</p>
+    </div>
+  </div>
+  <div class="cols cols-3" style="margin-top:14px">
+    <div class="card rust"><div class="stat">1023s<span>FLUX-dev, 12B, on one A100. About 17 minutes for a single 4K image.</span></div></div>
+    <div class="card"><div class="stat">76s<span>FLUX-schnell, also 12B. Distilled. Still far from interactive at 4K.</span></div></div>
+    <div class="card teal"><div class="stat">9.6s<span>SANA-0.6B on the same A100 measurement. The rest of the talk is how.</span></div></div>
+  </div>
+  <aside class="notes">
+    Make the failure concrete, then sit down. FLUX-dev, the 12 billion slow quality model, takes 1023 seconds for one 4096 image on an A100. That is a bit over 17 minutes, FP16, batch 1. Say the laptop sentence as arithmetic, not as a demo you ran: one head of the attention matrix is 65,536 squared times 2 bytes, which is exactly 8 GB in fp16. A 16 GB laptop still has to store weights, activations, and the other heads, so standard 4K softmax attention does not fit. FLUX-schnell, the distilled 12B cousin, is 76 seconds at 4K. Mention it now so nobody thinks every FLUX checkpoint takes 17 minutes. SANA-0.6B on that same A100 setup is 9.6 seconds. You may preview “under 10 seconds.” You may not say “100 times faster than FLUX” yet. 1023 divided by 9.6 is about 106, and that ratio is against FLUX-dev only. Schnell is about 8 times, 76 divided by 9.6. The results section will separate those denominators. No GenEval number exists at 4096 in this paper. This slide is latency and memory. Next section is method.
+  </aside>
+</section>
+
+<section id="pipeline">
+  <p class="kicker">Method · pipeline</p>
+  <h2>One pipeline. Patch size P = 1, so latent sites are DiT tokens.</h2>
+  <div class="figure-embed pipeline-figure">
+    <img
+      src="assets/fig-model.png"
+      alt="Paper Figure 3: SANA architecture overview with deep compression autoencoder and Linear DiT blocks, plus Linear Attention and Mix-FFN details."
+    >
+  </div>
+  <div class="gloss pipeline-gloss">
+    <div><b>Text · Gemma</b>User prompt plus CHI template → Gemma-2-2B-IT (frozen). Last-layer states pass RMSNorm with learned scale γ = 0.01, then feed cross-attention (the figure labels this block “Small LLM”).</div>
+    <div><b>Latent · $z_T$</b>Inference starts from noise latent $z_T$. At 1024 pixels the DC-AE grid is $32 \times 32 \times 32$ with $F = 32$, $C = 32$, and $P = 1$. Linear DiT denoises with ReLU linear attention ($\mathcal{O}(N)$) and Mix-FFN (3×3 depthwise conv).</div>
+    <div><b>Sampler · decode</b>Flow-DPM-Solver runs 14–20 steps to $z_0$. The same DC-AE decoder (32×) maps $z_0$ to a $1024 \times 1024$ image; 2K/4K use finetuned checkpoints.</div>
+  </div>
+  <p class="cap">Figure 3 in the paper: overview (a) and Linear DiT module (b). Positional embedding is optional at 1K (NoPE); sin-cos returns for 2K/4K finetunes. Xie and Chen et al., ICLR 2025.</p>
+  <aside class="notes">
+    Start with panel (a). User prompt and complex human instruction enter Gemma; the figure says Small LLM, you say Gemma-2-2B-IT frozen. RMSNorm and gamma at 0.01 are not drawn; point at the gloss. Cross-attention takes those text states; time embedding is shown. Pos emb is dashed because 1K training drops it; remind them sin-cos comes back on 2K and 4K finetunes. The trapezoid is the 32 times deep compression autoencoder on the latent path; at inference you do not encode a photo, you initialize noise z_T with the same 32 by 32 by 32 shape at 1K. Linear DiT is N blocks of linear attention, cross-attention, Mix-FFN; panel (b) is the O of N story and the 3 by 3 depthwise conv in the MLP. Flow-DPM-Solver and 14 to 20 steps are in the gloss, not in the figure. After z_0, the DC-AE decoder emits pixels. Say explicitly that patch size 1 means no patch embed inside the DiT. Next slide is token counts versus AE-F8 plus patch 2.
+  </aside>
+</section>
+
+<section id="pipeline-flow">
+  <p class="kicker">Method · pipeline</p>
+  <h2>Prompt to pixels: Figure 3 blocks plus sampler and decode.</h2>
+  <div class="figure-embed pipeline-flow-figure">
+    <img
+      src="assets/fig-pipeline-flow.png"
+      alt="End-to-end SANA inference: text path through Gemma and RMSNorm, noise latent through Linear DiT with time and cross-attention, Flow-DPM-Solver, and DC-AE decode to image."
+    >
+  </div>
+  <p class="cap">Mermaid overview aligned with Figure 3(a): Small LLM, time/pos conditioning, DC-AE latent grid, and Linear DiT block order. RMSNorm, noise init $z_T$, Flow-DPM-Solver, and explicit decoder step are inference additions not drawn in the paper figure. Xie and Chen et al., ICLR 2025.</p>
+  <aside class="notes">
+    This slide is the walk-through version of the static architecture figure. Read left to right. Text matches panel (a): user prompt wrapped in complex human instruction, then the pink Small LLM box, which you name as Gemma-2-2B-IT frozen. RMSNorm and gamma 0.01 are seminar gloss because the PDF omits them. Time embedding is in the figure; positional embedding is dashed there because 1K training uses NoPE and 2K/4K finetunes turn sin-cos back on. The latent path is inference-only: you do not run the encoder on a photo; you sample noise z_T with the same 32 by 32 by 32 shape the 32 times autoencoder would use. Inside Linear DiT, keep the order from the figure and from panel (b): linear attention, then cross-attention fed by text, then Mix-FFN with the 3 by 3 depthwise conv; mention the residual around the block if someone asks. Flow-DPM-Solver and 14 to 20 steps are not in Figure 3 but close the loop on velocity prediction. z_0 exits through the DC-AE decoder trapezoid to RGB. Patch size 1 means each latent site is one DiT token. Next slide is the autoencoder ablation: where the 32 times compression lives.
+  </aside>
+</section>
+
+<section id="where">
+  <p class="kicker">Method · autoencoder</p>
+  <h2>Put the compression in the autoencoder, not in the patch size.</h2>
+  <div class="cols cols-2">
+    <div>
+      <div class="gloss">
+        <div><b>C · latent channels</b>After encoding, each grid cell holds $C$ learned scalars—a small code vector, not a pixel. The encoder is trained so different channels pick up different aspects of local appearance (layout, edges, texture, color variation, fine detail); together they describe what should be at that location, and the decoder combines all $C$ to reconstruct RGB. More $C$ is a wider code (more capacity for detail), not a larger grid.</div>
+      </div>
+      <p>They hold the token grid fixed at 32×32 for a 1024 image, and move the downsampling between the autoencoder and the patch embed.</p>
+      <ul class="clean">
+        <li>AE-F8C16 with patch 4.</li>
+        <li>AE-F16C32 with patch 2.</li>
+        <li>AE-F32C32 with patch 1.</li>
+      </ul>
+      <p>Reconstruction rFID gets worse as F grows. Generation FID gets better as F grows. The best compressor is the worst generator, and the reverse.</p>
+    </div>
+    <div class="card teal">
+      <h3>The design rule</h3>
+      <p>High-resolution images are redundant. An autoencoder can spend its capacity on that. A diffusion model that also has to patch away detail is doing two jobs, and it does the denoising job worse.</p>
+      <p>DC-AE is trained with linear attention inside the autoencoder, then finetuned at 1024 so the high-resolution reconstruction holds. The architecture paper is Chen et al., 2024, arXiv:2410.10733.</p>
+    </div>
+  </div>
+  <aside class="notes">
+    This is the intellectual center of the autoencoder section, and it is an ablation, not a slogan. Before the three-way comparison, define C if anyone looks lost: at each latent cell, C numbers are a learned summary of that patch of the image—different channels split different kinds of detail, and the decoder needs the full vector. More C is capacity, not resolution. Three systems, same 32 by 32 tokens. Pushing compression into a larger patch, F8 with patch 4, gives the best reconstruction and the worst generations. Giving the autoencoder the whole stride of 32 gives the worst reconstruction of the three and the best generations. The paper’s conclusion: the autoencoder should own compression, and the diffusion transformer should only denoise. They also put linear attention inside the autoencoder itself, for the same high-resolution reason, and they finetune the AE at 1024 rather than hoping a low-resolution AE extrapolates. If you are asked where the 32 times AE comes from, it is a companion paper, Deep Compression Autoencoder, cited as Chen et al. 2024. Figure 11 in this paper shows the original next to DC-AE and next to SDXL’s VAE and says both reconstructions are nearly indistinguishable by eye. You are not showing that figure unlabeled, because the embedded images are not self-describing. The numbers on the next slide are the claim you can defend. The qualitative gap that still worries you is small text and distant faces: once the AE has erased them, the DiT cannot invent the true pixels back. That becomes discussion question two.
+  </aside>
+</section>
+
+<section id="channels">
+  <p class="kicker">Method · autoencoder</p>
+  <h2>C = 32 is the operating point, not a match for SDXL.</h2>
+  <div class="gloss channels-gloss">
+    <div><b>MJHQ-30K</b>30,000 Midjourney images used as a reconstruction benchmark; each metric compares originals to VAE encode–decode on this set.</div>
+    <div><b>SDXL</b>Stable Diffusion XL reference VAE in the table (F8C4: 8× downsampling, 4 latent channels)—the strong reconstruction baseline.</div>
+    <div><b>SD</b>Stable Diffusion 1.x (latent diffusion): the F32C64 row is its older 32× VAE, a failed compression baseline before DC-AE.</div>
+    <div><b>rFID ↓</b>Reconstruction FID: distributional distance between MJHQ originals and encode–decode outputs (lower = closer). Not generation FID.</div>
+    <div><b>PSNR ↑</b>Peak signal-to-noise ratio from pixel MSE between original and reconstruction; reported in dB (higher = less pixel error).</div>
+    <div><b>SSIM ↑</b>Structural similarity of local patterns, contrast, and brightness (often 0–1; higher = more structurally alike).</div>
+    <div><b>LPIPS ↓</b>Learned perceptual patch distance in a deep network feature space (lower = more perceptually similar).</div>
+  </div>
+  <table class="grid">
+    <thead>
+      <tr><th>Autoencoder, on MJHQ-30K</th><th class="num">rFID ↓</th><th class="num">PSNR ↑</th><th class="num">SSIM ↑</th><th class="num">LPIPS ↓</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>SDXL, F8C4</td><td class="num">0.31</td><td class="num">31.41</td><td class="num">0.88</td><td class="num">0.04</td></tr>
+      <tr><td>SD, F32C64. An earlier 32× attempt.</td><td class="num">0.82</td><td class="num">27.17</td><td class="num">0.79</td><td class="num">0.09</td></tr>
+      <tr class="ours"><td>DC-AE, F32C32</td><td class="num">0.34</td><td class="num">29.29</td><td class="num">0.84</td><td class="num">0.05</td></tr>
+    </tbody>
+  </table>
+  <p>At the same 32×32 token count, generation FID ranks F32C32P1 &lt; F16C32P2 &lt; F8C16P4—worse reconstruction can still yield better samples when the AE owns compression and the DiT only denoises.</p>
+  <p class="call">DC-AE F32C32 bridges the gap SD F32C64 left open: rFID comparable to SDXL, with a small PSNR and perceptual margin the paper does not expect to bottleneck the DiT. C = 32 is the chosen width—better than C = 16 on reconstruction and downstream scores, and far faster to train through than C = 64.</p>
+  <aside class="notes">
+    Read the table against the adjective “comparable.” On rFID, 0.34 against SDXL’s 0.31, yes. On PSNR, 29.29 against 31.41, that is two decibels. SSIM 0.84 against 0.88, LPIPS 0.05 against 0.04. Close enough that the authors say the autoencoder will not be the DiT’s bottleneck. Not close enough to tell a room they matched SDXL. The older Stable Diffusion F32C64 autoencoder is the negative control: rFID 0.82, PSNR 27.17. People had tried 32 times compression and failed. Then the channel sweep, from Figure 3. Sixteen channels converge fast and reconstruct badly, rFID 0.86. Sixty-four channels reconstruct better, and the diffusion model that has to denoise those channels converges much more slowly. Thirty-two is the compromise. End on the call line: usable 32× latent, comparable rFID, honest gap on pixels, C = 32 because the DiT training curve matters too. If a question comes on whether rFID 0.34 means fine text survives, the honest answer is that rFID is a distributional reconstruction score on MJHQ, not a small-text probe. That is discussion question two, and you should not pretend the metric answered it.
+  </aside>
+</section>
+
+<section id="linear">
+  <p class="kicker">Method · linear DiT · core mechanics</p>
+  <h2>From an $N\times N$ softmax map to linear cost in sequence length.</h2>
+  <div class="slide-main">
+    <div class="cols cols-2-even linear-top">
+      <div class="figure-embed model-panel-figure">
+        <img
+          src="assets/linear.PNG"
+          alt="Figure 3(b), Linear Attention: ReLU on Q and K, MatMul reordering to a d×d aggregate, Scale normalizer, Cost O(n)."
+        >
+      </div>
+      <div class="linear-intro">
+        <p class="lede">To cut cost, SANA replaces softmax self-attention with ReLU linear attention (Katharopoulos et al., 2020). ReLU linear attention and related variants (EfficientViT, Linformer, and others) are proven in high-resolution <em>dense prediction</em>; this work is an early test that they work for <em>image generation</em>.</p>
+        <p class="linear-body">In implementation, we do not rebuild attention per query. Compute shared terms once, reuse them for every $\mathbf{Q}_i$ — linear $\mathcal{O}(N)$ memory and compute (paper), vs an $N\times N$ softmax map.</p>
+      </div>
+    </div>
+    <div class="cols cols-3 linear-math-row">
+      <div class="eq">$$\mathbf{O}_i=\frac{\mathrm{ReLU}(\mathbf{Q}_i)\left(\sum_{j=1}^{N}\mathrm{ReLU}(\mathbf{K}_j)^{\top}\mathbf{V}_j\right)}{\mathrm{ReLU}(\mathbf{Q}_i)\left(\sum_{j=1}^{N}\mathrm{ReLU}(\mathbf{K}_j)^{\top}\right)}$$</div>
+      <div class="card">
+        <h3>Shared terms (one pass over $N$)</h3>
+        <p>$\displaystyle\sum_{j=1}^{N}\mathrm{ReLU}(\mathbf{K}_j)^{\top}\mathbf{V}_j\in\mathbb{R}^{d\times d}$ and $\displaystyle\sum_{j=1}^{N}\mathrm{ReLU}(\mathbf{K}_j)^{\top}\in\mathbb{R}^{d\times 1}$ — then each query only multiplies through these aggregates (Figure 3(b), Eq. in paper).</p>
+      </div>
+      <div class="card teal">
+        <h3>Wall clock · $d=1152$</h3>
+        <p>At 4K, $N=16{,}384$ — linear-attention step 41 s → 24 s (1.7×). Cross-attention to text stays softmax (short sequence).</p>
+      </div>
+    </div>
+  </div>
+  <p class="cap">Linear Attention: $\mathrm{ReLU}$ on $Q$/$K$, $d\times d$ key–value aggregate, Scale, Cost $\mathcal{O}(n)$. Xie and Chen et al., ICLR 2025.</p>
+  <aside class="notes">
+    Track Section 3.2 Linear Attention block. Opening: replace softmax with ReLU linear attention, Katharopoulos 2020. Variants like EfficientViT and Linformer lived in dense prediction; authors call SANA an early generation experiment — say that before the math. Implementation point from the paper: shared sums over keys are computed once, not per query; that is the d by d matrix and d by 1 normalizer on the slide. Point at Figure 3(b): K and V MatMul first, then Q, Scale is the denominator. The equation is Eq. relu linear attention in the paper. They claim order N in memory and compute; if someone asks about d, agree the implementation is N d squared work with fixed width 1152. Table 8 at 1024 is modest; Figure 2 at 4K is the 41 to 24 second win. Cross-attention stays softmax. Next slide: Mix-FFN and NoPE.
+  </aside>
+</section>
+
+<section id="nope">
+  <p class="kicker">Method · linear DiT · Mix-FFN &amp; NoPE</p>
+  <h2>Depthwise convolution restores locality; padding carries position at 1K.</h2>
+  <div class="slide-main">
+    <div class="cols cols-2-even nope-layout">
+      <div class="figure-embed model-panel-figure">
+        <img
+          src="assets/mix-ffn.PNG"
+          alt="Figure 3(b), Mix-FFN: 1×1 conv, 3×3 conv, GLU gating, 1×1 conv."
+        >
+      </div>
+      <div class="nope-copy">
+        <div class="card">
+          <h3>Mix-FFN stack</h3>
+          <p>Global ReLU attention needs a local mixer — match the paper diagram:</p>
+          <ol>
+            <li>$1\times1$ conv — expand</li>
+            <li>$3\times3$ depthwise conv — spatial mix</li>
+            <li>Gated Linear Unit ($\times$ branch + ReLU branch)</li>
+            <li>$1\times1$ conv — project</li>
+          </ol>
+        </div>
+        <div class="card teal">
+          <h3>NoPE at 512 / 1024 px</h3>
+          <p>Positional Embedding was removed without any loss in performance. Some earlier theoretical and practical works have mentioned that introducing 3×3 convolution with zero padding can implicitly incorporate the position information.</p>
+          <p>In contrast to previous DiT-based methods that mostly use absolute PE, learnable PE, and RoPE, authors propose NoPE, the first design that entirely omits positional embedding in DiT.</p>
+          <p>NoPE applies to 512/1024 pretraining. At 2K finetune, absolute PE is reintroduced for performance; at 4K finetune based on 2K, PE is interpolated as in PixArt-$\Sigma$.</p>
+        </div>
+      </div>
+    </div>
+    <div class="nope-dataflow-row">
+      <div class="eq mix-ffn-dataflow">
+        <p class="mix-ffn-dataflow-label">Data flow</p>
+        $$\begin{aligned}
+        X &amp;\in \mathbb{R}^{H \times W \times C} \\
+        \xrightarrow{\mathrm{Conv}_{1\times 1}} &amp;\quad \mathbb{R}^{H \times W \times E \cdot C} &amp;&amp; \text{(Expand channels across 1×1 grid)} \\
+        \xrightarrow{\mathrm{DWConv}_{3\times 3}} &amp;\quad \mathbb{R}^{H \times W \times E \cdot C} &amp;&amp; \text{(Spatial mix within each channel)} \\
+        \xrightarrow{\mathrm{GLU}} &amp;\quad \mathbb{R}^{H \times W \times \frac{E \cdot C}{2}} &amp;&amp; \text{(Element-wise gating and dimension split)} \\
+        \xrightarrow{\mathrm{Conv}_{1\times 1}} &amp;\quad \mathbb{R}^{H \times W \times C} &amp;&amp; \text{(Project back to original channels)}
+        \end{aligned}$$
+      </div>
+    </div>
+  </div>
+  <p class="cap">Figure 3(b), Mix-FFN: $1\times1$ → $3\times3$ depthwise → GLU → $1\times1$ (from the Linear DiT module detail). Xie and Chen et al., ICLR 2025.</p>
+  <aside class="notes">
+    Open on the Mix-FFN half of panel (b). Read bottom-up: 1 by 1 expand, 3 by 3 depthwise local mix, ReLU branch times skip for GLU, 1 by 1 project — EfficientViT-style inverted residuals. Table 13 at 256 pixels and 52k steps: FID 18.7 full attention, 21.5 linear only, 18.9 with Mix-FFN. NoPE: padded 3 by 3 knows the border, Islam Jia Bruce 2020; remove absolute, learnable, and RoPE at 512 and 1024 pretraining with no reported quality loss. Tie to Figure 3(a) on the pipeline slide: dashed Pos Emb. Do not overclaim: appendix finetuning from 1K to 2K puts sin-cos back; 2K to 4K interpolates like PixArt-Sigma, about 10k steps. Tease discussion question one: linear attention plus Mix-FFN versus full Softmax. Cross-attention to text stays ordinary; the NoPE claim is image self-attention at 1K training.
+  </aside>
+</section>
+
+<section id="gemma">
+  <p class="kicker">Method · text encoder</p>
+  <h2>Decoder-only Gemma-2 and the CHI prompt enhancer</h2>
+  <div class="cols cols-2-even gemma-layout">
+    <div class="gemma-copy">
+      <div class="gloss">
+        <div><b>Encoder</b>Turns text into numerical context for the diffusion transformer—typically a sequence of hidden states, one per subword token. Cross-attention lets each image token query that sequence (“what objects, colors, layout?”). Prior text-to-image models often use CLIP or T5 encoders; SANA uses an instruct-tuned Gemma for stronger comprehension and CHI-expanded prompts, with RMSNorm and small initial $\gamma$ so raw LLM activations do not destabilize training.</div>
+      </div>
+      <ul class="clean gemma-points">
+        <li><strong>Why Gemma-2-2B over T5-XXL?</strong> T5-XXL has 4.7B parameters and 1.61&nbsp;s encode latency. Gemma-2-2B-IT runs in <strong>0.28&nbsp;s (about 6× faster)</strong> with equal or better comprehension at similar FID; Gemma stays frozen.</li>
+        <li><strong>Stabilizing training (RMSNorm + scale).</strong> Raw decoder-only hidden states as cross-attention K/V drive the loss to $\mathrm{NaN}$ (large variance vs.&nbsp;T5). SANA applies RMSNorm (variance&nbsp;→&nbsp;1) and a learnable scale $\gamma$ with $\gamma_{\mathrm{init}}=0.01$.</li>
+        <li><strong>Complex Human Instruction (CHI).</strong> In-context examples plus a system template ask Gemma to expand a short user prompt into a visual description before embeddings reach the DiT (figure&nbsp;→).</li>
+      </ul>
+      <div class="eq gemma-eq">$$\mathrm{Embed}(T)=\gamma\cdot\mathrm{RMSNorm}(\mathrm{Gemma}(T)),\qquad \gamma_{\mathrm{init}}=0.01$$</div>
+      <p class="gemma-impact"><strong>Impact:</strong> GenEval gains of +2.0 to +2.2 points with CHI (early training, 0–100 scale); +5k finetune vs.&nbsp;LiDiT-style instructions: 0.642 vs.&nbsp;0.626.</p>
+    </div>
+    <div class="figure-embed gemma-chi-figure">
+      <img
+        src="assets/fig-chi.png"
+        alt="Paper figure: nine generations for prompt “A cat” without CHI versus with CHI; with CHI, outputs are more realistic with richer detail and fewer artifacts."
+      >
+    </div>
+  </div>
+  <p class="cap">Generations with and without Complex Human Instruction (CHI). Without CHI, a short prompt can yield artifacts and weaker detail. Xie and Chen et al., ICLR 2025.</p>
+  <aside class="notes">
+    Slide 3.5 arc: swap, stabilize, enhance. Why Gemma: latency first for the room, then quality. Table 9 at 50k steps is the fair encoder horse-race — GenEval 0.50 for Gemma-2-2B-IT vs 0.51 for T5-XXL, FID 6.1 both, 0.28 s vs 1.61 s. Base Gemma-2-2B is 0.45; instruct tuning matters. They use last-layer states and never finetune Gemma, unlike LiDiT. Stabilization story: plugging Gemma states straight into cross-attention NaNs early because LLM coordinates have heavy tails vs tiny T5 variance. RMSNorm to 1 is load-bearing; γ at 0.01 is a gentle ramp — Figure 6 shows no norm means NaN, γ=1 works but slower. CHI: point at the figure on the right. Same short prompt “a cat”; without CHI the grid shows missing detail and artifacts; with CHI, richer and more stable compositions. Backup slide has the verbatim template and Figure 13 conversational failure mode. Impact: do not conflate scales — 45.5 to 47.7 is +2.2 on the paper’s 0–100 early table; Table 10’s 0.642 vs 0.626 is the LiDiT-comparable finetune at +5k steps. Final shipped GenEval 0.64 is after the full schedule, not these ablation numbers.
+  </aside>
+</section>
+
+<section id="recipe">
+  <p class="kicker">Method · training</p>
+  <h2>Training data is relabeled, reweighted, and scaled up in stages.</h2>
+  <div class="gloss">
+    <div><b>CLIP score</b>A scalar from a frozen CLIP model: similarity between the image and a candidate caption in CLIP’s shared embedding space. Higher $c_i$ means the text describes that image more closely; SANA uses it only to rank and sample captions.</div>
+  </div>
+  <ul class="clean">
+    <li>Four VLMs recaption each image—VILA-3B, VILA-13B, InternVL2-8B, and InternVL2-26B—so supervision is more accurate and diverse than one fixed string.</li>
+    <li>Each training step draws one caption with a softmax over those scores, biasing toward stronger image–text pairs; $\tau$ controls how sharply you favor the top captions.</li>
+    <li>Resolution follows a ladder—512 → 1024 → 2K → 4K—with no separate 256px stage: heavy spatial compression already lives in the autoencoder. Low-res pretrain dropped too much detail and slowed model convergence.</li>
+  </ul>
+  <div class="eq">$$P(c_i)=\frac{\exp\left(c_i / \tau\right)}{\sum_{j=1}^{N} \exp\left(c_j / \tau\right)}$$</div>
+  <p>Which caption you sample shifts training-time semantic alignment a little while image quality (FID) stays essentially flat—a cheap lever next to retraining the diffusion model.</p>
+  <p class="note">The scorer’s CLIP uses a 77-token context; authors argue salient words are front-loaded.</p>
+  <aside class="notes">
+    This is the part a pure latency reading of SANA skips, and it is half of the abstract’s fourth contribution. For every image they ask four vision-language models for a caption: two VILA sizes and two InternVL2 sizes. Randomly picking among them does almost nothing. Sampling with the softmax over CLIP score, temperature τ, lifts CLIP from 27.10 to 27.26 at 65k steps and leaves FID flat at about 6.12. Small, real, and cheap relative to training the diffusion model. Point at the equation: c_i is the CLIP score for caption i, N is the number of candidates for that image, τ near zero collapses to always taking the highest score. Then the caveat they wrote themselves: the CLIP they score with has a 77-token context. Long captions get truncated. They argue, from looking, that the content words are front-loaded, so 77 tokens still rank captions usefully. That is a judgment, not a measurement you should oversell. The resolution schedule is the other half. Because the autoencoder is already at stride 32, a 512 image is only 16 by 16 tokens. They skip the traditional 256 pretraining, which they think throws away the detail the alignment loss needs, and cascade 512, then 1024, then 2K, then 4K. Remember from the previous section that the 2K and 4K stages are where positional embeddings come back.
+  </aside>
+</section>
+
+<section id="flow">
+  <p class="kicker">Method · flow &amp; sampling</p>
+  <h2>Flow matching: what changes in training?</h2>
+  <div class="cols cols-2-even flow-compare">
+    <div class="card rust">
+      <h3>Classical DDPM</h3>
+      <p>Corrupt the latent: $x_t=\alpha_t x_0+\sigma_t\epsilon$.</p>
+      <p>The DiT learns <strong>noise prediction</strong> $\epsilon_\theta(x_t,t)\approx\epsilon$.</p>
+      <p>Near $t\approx T$ (almost pure noise), that target is <strong>hard to learn and integrate</strong>; errors compound over sampling steps.</p>
+    </div>
+    <div class="card teal">
+      <h3>SANA (rectified flow)</h3>
+      <p>Same corruption $x_t$.</p>
+      <p>The DiT learns <strong>velocity</strong> $v_\theta(x_t,t)\approx\epsilon-x_0$—a straight path from data toward noise.</p>
+      <p>More stable where attention peaks at $t\approx T$ (Balaji et al.); the paper reports <strong>faster training convergence</strong> vs. DDPM at matched budget.</p>
+    </div>
+  </div>
+  <p class="flow-readout">At inference, Flow-DPM-Solver converts velocity to a data readout when the multistep update needs $\hat x_0$:</p>
+  <div class="eq flow-eq">$$\hat x_0=x_t-\sigma_t v_\theta(x_t,t)$$</div>
+  <div class="figure-embed flow-sampler-figure">
+    <img
+      src="assets/fig-flow-sampler-ablation.png"
+      alt="Figure 8: FID and CLIP score versus sampling steps, comparing Flow-DPM-Solver and Flow-Euler."
+    >
+  </div>
+  <p class="cap">Figure 8: FID and CLIP vs. steps—Flow-DPM-Solver stabilizes by <strong>14–20</strong> steps; Flow-Euler often needs <strong>28–50</strong> and ends worse. Xie and Chen et al., ICLR 2025.</p>
+  <aside class="notes">
+    Slide 3.6: two-card contrast from methods L122–124. Left: shared LDM corrupting recipe, DDPM noise target, instability near the prior. Right: SANA keeps the same x_t but regresses velocity; cite Balaji for strong attention at t equals T; Table 3 backup if someone wants numbers at 256px and 120k steps. Read the readout line once: DPM-Solver++ expects data; SANA outputs v, so x0 hat equals x minus sigma v. Point at Figure 8 for inference—solver flat by 14 to 20, Euler 28 to 50 and worse. Full Tweedie argument stays on backup tweedie slide; Algorithm 1 edits on backup solver slide.
+  </aside>
+</section>
+
+<section id="model-size">
+  <p class="kicker">Results · model size</p>
+  <h2>0.6B and 1.6B stay in the 20–30 layer band. Width scales; depth does not.</h2>
+  <div class="gloss gloss-compact">
+    <div><b>Width</b>Hidden size of each DiT block; sets capacity and the width of the linear-attention state.</div>
+    <div><b>Depth</b>Number of stacked DiT blocks—more layers, more compute per forward pass.</div>
+    <div><b>FFN</b>Feed-forward inner width (Mix-FFN in SANA); often the largest block after attention.</div>
+    <div><b>Heads</b>Parallel attention heads; head dimension stays 32 on both checkpoints.</div>
+    <div><b>Params</b>DiT weights only (590M / 1.6B); Gemma-2-2B-IT is frozen and separate.</div>
+    <div><b>AE</b>Autoencoder + patch config (e.g. F8C4P2 vs F32C32P1); fixes the token grid at 1024.</div>
+    <div><b>MACs (T)</b>Multiply–accumulate operations for one denoiser forward at 1024.</div>
+    <div><b>Latency (ms)</b>Batch 1, one forward pass on an A100 (Table 8); 20-step end-to-end time is higher.</div>
+  </div>
+  <table class="grid compact">
+    <thead>
+      <tr><th>Table 6 · DiT architecture</th><th class="num">Width</th><th class="num">Depth</th><th class="num">FFN</th><th class="num">Heads</th><th class="num">Params</th></tr>
+    </thead>
+    <tbody>
+      <tr class="ours"><td>SANA-0.6B</td><td class="num">1152</td><td class="num">28</td><td class="num">2880</td><td class="num">36</td><td class="num">590M</td></tr>
+      <tr class="ours"><td>SANA-1.6B</td><td class="num">2240</td><td class="num">20</td><td class="num">5600</td><td class="num">70</td><td class="num">1604M</td></tr>
+    </tbody>
+  </table>
+  <p class="note model-size-bridge">Same depth class as DiT-XL and PixArt-Σ—not a 12B-wide FLUX stack. At 1024 the MAC cliff is F32; linear attention alone regresses quality until Mix-FFN.</p>
+  <div class="cols cols-2 model-size-tables">
+    <table class="grid compact">
+      <thead>
+        <tr><th>Table 8 · 1024² block cost (A100 FP16)</th><th>AE</th><th class="num">MACs</th><th class="num">Latency</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>FullAttn &amp; FFN</td><td>F8C4P2</td><td class="num">6.48T</td><td class="num">2250 ms</td></tr>
+        <tr><td>+ LinearAttn</td><td>F8C4P2</td><td class="num">4.30T</td><td class="num">1931 ms</td></tr>
+        <tr><td>+ MixFFN</td><td>F8C4P2</td><td class="num">4.19T</td><td class="num">2425 ms</td></tr>
+        <tr><td>+ Kernel fusion</td><td>F8C4P2</td><td class="num">4.19T</td><td class="num">2139 ms</td></tr>
+        <tr class="ours"><td>LinearAttn &amp; MixFFN</td><td>F32C32P1</td><td class="num">1.08T</td><td class="num">826 ms</td></tr>
+        <tr class="ours"><td>+ Kernel fusion</td><td>F32C32P1</td><td class="num">1.08T</td><td class="num">748 ms</td></tr>
+      </tbody>
+    </table>
+    <div>
+      <table class="grid compact">
+        <thead>
+          <tr><th>Table 13 · quality, 256px, 52k</th><th class="num">FID</th><th class="num">CLIP</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Full attention + FFN</td><td class="num">18.7</td><td class="num">24.9</td></tr>
+          <tr><td>Linear attention</td><td class="num">21.5</td><td class="num">23.3</td></tr>
+          <tr class="ours"><td>+ Mix-FFN</td><td class="num">18.9</td><td class="num">24.8</td></tr>
+        </tbody>
+      </table>
+      <p class="note model-size-quality-note">Linear attention alone is a quality regression. Mix-FFN earns it back and, at 1024, spends the latency linear attention had saved. Fusion recovers some of that. F32 cuts MACs from 4.19T to 1.08T.</p>
+    </div>
+  </div>
+  <p class="cap">Tables 6, 8 &amp; 13. Xie and Chen et al., ICLR 2025.</p>
+  <aside class="notes">
+    Bridge from method to benchmarks. Table 6: 0.6B is DiT-XL shaped, 1152 by 28, 590 million parameters. 1.6B goes wider to 2240 and shallower to 20—the authors say depth between 20 and 30 is the efficiency knee. Not competing with FLUX on parameter count; competing on co-design. Table 8: at 1024 on the old F8 autoencoder, linear attention saves hundreds of milliseconds but Mix-FFN gives latency back until fusion. The MAC cliff is F32: 6.48 trillion down to 1.08 trillion. Table 13 is why they refused linear attention alone: same 52k steps at 256 pixels, FID 18.7 to 21.5, CLIP 24.9 to 23.3; Mix-FFN returns both. Kernel fusion does not change quality. Stop the room from saying linear attention makes diffusion fast—at 1024 compression dominates; the 1.7 times attention win on the waterfall is a 4K story. Next slide is full Table 7 at 1024.
+  </aside>
+</section>
+
+<section id="results">
+  <p class="kicker">Results · 1024</p>
+  <h2>39× throughput vs FLUX-dev; FID wins; GenEval trails schnell and dev slightly.</h2>
+  <table class="grid results-main-table">
+    <thead>
+      <tr>
+        <th>Table 7 · 1024²</th>
+        <th class="num">img/s</th>
+        <th class="num">Lat.</th>
+        <th class="num">Params</th>
+        <th class="num">× vs FLUX-dev</th>
+        <th class="num">FID↓</th>
+        <th class="num">CLIP</th>
+        <th class="num">GenE</th>
+        <th class="num">DPG</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>LUMINA-Next</td><td class="num">0.12</td><td class="num">9.1s</td><td class="num">2.0B</td><td class="num">2.8×</td><td class="num">7.58</td><td class="num">26.84</td><td class="num">0.46</td><td class="num">74.6</td></tr>
+      <tr><td>SDXL</td><td class="num">0.15</td><td class="num">6.5s</td><td class="num">2.6B</td><td class="num">3.5×</td><td class="num">6.63</td><td class="num">29.03</td><td class="num">0.55</td><td class="num">74.7</td></tr>
+      <tr><td>Playground v2.5</td><td class="num">0.21</td><td class="num">5.3s</td><td class="num">2.6B</td><td class="num">4.9×</td><td class="num">6.09</td><td class="num">29.13</td><td class="num">0.56</td><td class="num">75.5</td></tr>
+      <tr><td>Hunyuan-DiT</td><td class="num">0.05</td><td class="num">18.2s</td><td class="num">1.5B</td><td class="num">1.2×</td><td class="num">6.54</td><td class="num">28.19</td><td class="num">0.63</td><td class="num">78.9</td></tr>
+      <tr><td>PixArt-Σ</td><td class="num">0.40</td><td class="num">2.7s</td><td class="num">0.6B</td><td class="num">9.3×</td><td class="num">6.15</td><td class="num">28.26</td><td class="num">0.54</td><td class="num">80.5</td></tr>
+      <tr><td>DALL·E 3</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">—</td><td class="num">0.67</td><td class="num">83.5</td></tr>
+      <tr><td>SD3-medium</td><td class="num">0.28</td><td class="num">4.4s</td><td class="num">2.0B</td><td class="num">6.5×</td><td class="num">11.92</td><td class="num">27.83</td><td class="num">0.62</td><td class="num">84.1</td></tr>
+      <tr><td>FLUX-dev</td><td class="num">0.04</td><td class="num">23s</td><td class="num">12B</td><td class="num">1.0×</td><td class="num">10.15</td><td class="num">27.47</td><td class="num">0.67</td><td class="num">84.0</td></tr>
+      <tr><td>FLUX-schnell</td><td class="num">0.50</td><td class="num">2.1s</td><td class="num">12B</td><td class="num">11.6×</td><td class="num">7.94</td><td class="num">28.14</td><td class="num">0.71</td><td class="num">84.8</td></tr>
+      <tr class="ours"><td>SANA-0.6B</td><td class="num">1.7</td><td class="num">0.9s</td><td class="num">0.6B</td><td class="num">39.5×</td><td class="num">5.81</td><td class="num">28.36</td><td class="num">0.64</td><td class="num">83.6</td></tr>
+      <tr class="ours"><td>SANA-1.6B</td><td class="num">1.0</td><td class="num">1.2s</td><td class="num">1.6B</td><td class="num">23.3×</td><td class="num">5.76</td><td class="num">28.67</td><td class="num">0.66</td><td class="num">84.8</td></tr>
+    </tbody>
+    <caption>A100 FP16, 20 steps. Throughput batch 16; latency batch 1. Speedup vs FLUX-dev throughput. FID &amp; CLIP on MJHQ-30K. Table 7.</caption>
+  </table>
+  <div class="results-foot">
+    <div class="card teal results-readout">
+      <h3>Read the tradeoffs</h3>
+      <ul class="clean">
+        <li><strong>vs FLUX-dev:</strong> 0.9&nbsp;s vs 23&nbsp;s; 1.7 vs 0.04&nbsp;img/s (39.5×). FID 5.81 vs 10.15 on MJHQ-30K.</li>
+        <li><strong>vs FLUX-schnell:</strong> SANA still wins latency (0.9 vs 2.1&nbsp;s) and FID; schnell leads GenEval (0.71 vs 0.64) and ties 1.6B on DPG (84.8).</li>
+        <li><strong>vs PixArt-Σ (0.6B peer):</strong> wins FID, GenEval, DPG, and throughput.</li>
+      </ul>
+      <p class="note">GenEval category breakdown is on the backup slide.</p>
+    </div>
+    <div class="gloss-stack">
+      <div><b>FID ↓</b>Fréchet distance on MJHQ-30K (30k Midjourney-style images); lower = closer to that reference set.</div>
+      <div><b>CLIP ↑</b>Image–text similarity on MJHQ-30K captions; higher = better match to those captions.</div>
+    </div>
+    <div class="gloss-stack">
+      <div><b>GenEval ↑</b>533 structured prompts (objects, counts, colors, layout); higher = better compositional following.</div>
+      <div><b>DPG ↑</b>DPG-Bench, 1,065 dense prompts; higher = better prompt alignment.</div>
+    </div>
+  </div>
+  <aside class="notes">
+    Do not let the highlighted rows become a victory lap. Point at the tradeoff card under the table, then walk one row if time allows. Against FLUX-dev, SANA-0.6B is 0.9 seconds versus 23, throughput 1.7 versus 0.04 images per second—Table 7’s 39.5 times. FID is 5.81 versus 10.15 on MJHQ-30K. GenEval is 0.64 versus 0.67. DPG is 83.6 versus 84.0. Honest summary: much faster, strong FID on this set, near-tied DPG, small GenEval gap. Against FLUX-schnell the speed story shrinks: 2.1 seconds and 0.50 images per second, GenEval 0.71, DPG tied with SANA-1.6B at 84.8. Against PixArt-Sigma at 0.6B, SANA wins every quality and speed column here. The two gloss columns define the quality metrics—stress that FID is a Midjourney aesthetic exam, GenEval and DPG are prompt exams. LUMINA and Playground sit in the sub-3B band for context. DALL-E 3 omits speed in the paper. If someone asks about 1.72 versus 1.7, Table 7 rounds to one decimal. Backup geneval slide for counting and color.
+  </aside>
+</section>
+
+<section id="waterfall">
+  <p class="kicker">Results · 4K latency</p>
+  <h2>At 512, schnell is faster. At 4K, SANA is 8× schnell and 106× dev.</h2>
+  <table class="grid ladder">
+    <thead>
+      <tr>
+        <th>Latency, batch 1, A100 FP16</th>
+        <th class="num">512</th>
+        <th class="num">1024</th>
+        <th class="num">2048</th>
+        <th class="num">4096</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td>FLUX-dev</td><td class="num">7.9s</td><td class="num">23s</td><td class="num">117s</td><td class="num">1023s</td></tr>
+      <tr><td>FLUX-schnell</td><td class="num leads">0.7s</td><td class="num">2.1s</td><td class="num">10.5s</td><td class="num">76s</td></tr>
+      <tr><td>PixArt-Σ</td><td class="num">1.2s</td><td class="num">2.7s</td><td class="num">18.1s</td><td class="num">186s</td></tr>
+      <tr class="ours"><td>SANA-0.6B</td><td class="num">0.8s</td><td class="num">0.9s</td><td class="num">2.5s</td><td class="num">9.6s</td></tr>
+    </tbody>
+    <caption>Table 15. Rust cell: schnell leads at 512 only. At 4096, SANA-0.6B is 0.104 img/s and schnell is 0.013, so those rates are 1/latency. SANA-1.6B at 4096 is 15.9s on Figure 1. No GenEval or DPG at 4096.</caption>
+  </table>
+  <div class="factor-strip">
+    <div class="factor"><b>469s</b><span>Own DiT baseline</span></div>
+    <div class="factor"><b>11.4×</b><span>Deep AE → 41s</span></div>
+    <div class="factor"><b>1.7×</b><span>Linear DiT → 24s</span></div>
+    <div class="factor"><b>1.1×</b><span>Triton → 21s</span></div>
+    <div class="factor final"><b>2.2×</b><span>Solver → 9.6s</span></div>
+  </div>
+  <p class="note factor-note">Figure 2, on their own stack: 11.4 × 1.7 × 1.1 × 2.2 ≈ 47, and 469/9.6 = 49. The autoencoder removes 428 of the 459 seconds. The headline’s 106× is 1023/9.6 against FLUX-dev; Table 15’s throughput ratio is 104×.</p>
+  <aside class="notes">
+    Walk the columns, then the strip. At 512, SANA-0.6B is 0.8 seconds and FLUX-dev is 7.9, about ten times, and the rust cell is schnell at 0.7 seconds, faster than SANA. At 1024, SANA takes the lead over schnell, 0.9 against 2.1. At 2048, 2.5 against 10.5 against dev’s 117. At 4096, 9.6 against 76 against 1023. 76 divided by 9.6 is about 8. 1023 divided by 9.6 is 106. PixArt-Sigma, the 0.6B near-4K prior from the introduction, is 186 seconds, about 19 times. SD3 is 230 and Hunyuan is 861; both are on the backup table with the 1.6B row. The efficiency claim gets more true as the image grows, which is what a linear-in-N model plus a 32 times autoencoder should do.
+    Then the strip, which is Figure 2 and not Table 15. Their own DiT baseline is 469 seconds. Deep compression does 11.4 times, to 41. Linear DiT does 1.7, to 24. Triton fusion does 1.1, to 21. The solver does 2.2, to 9.6, and that is 14 to 20 steps with better FID than Euler at 28 to 50, so it is fewer steps with a quality gain. Multiply the four factors and you get about 47. Divide 469 by 9.6 and you get 49. Say out loud that the autoencoder removes 428 of the 459 seconds. Linear attention is real at 4K and it is the small term.
+    The headline’s 106 divides 9.6 into FLUX-dev. Table 15’s throughput ratio is 104 times, 0.104 over 0.001, which is the abstract’s “100 plus” in throughput. At 4K, 0.104 images per second is 1 over 9.6, a batch-1 rate. Schnell’s throughput is 0.013. If a reviewer asks whether 100 times is the right headline, it is the right headline only when FLUX-dev is the system being replaced. For a distilled baseline the paper’s own table says about 8. Do not invent a 4K GenEval. Figure 2 prints 0.64 and 83.6 on the 9.6 second bar, and those are the 1024 scores from Table 7. Figure 1 puts SANA-1.6B at 15.9 seconds at 4K. Table 15’s matching cell reads 5.9 and would make the larger model faster, which disagrees with 0.066 images per second next to it. Quote Figure 1. The full grid is the backup.
+  </aside>
+</section>
+
+<section id="laptop">
+  <p class="kicker">Results · edge</p>
+  <h2>0.37 seconds on a laptop 4090, with the sensitive operations left in FP16.</h2>
+  <div class="cols cols-2">
+    <div>
+      <table class="grid">
+        <thead>
+          <tr><th>1024² on the laptop</th><th class="num">Latency</th><th class="num">CLIP</th><th class="num">ImageReward</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>SANA-0.6B, FP16</td><td class="num">0.88s</td><td class="num">28.5</td><td class="num">1.03</td></tr>
+          <tr class="ours"><td>W8A8</td><td class="num">0.37s</td><td class="num">28.3</td><td class="num">0.96</td></tr>
+        </tbody>
+        <caption>Table 5. 2.4×. CLIP on MJHQ-30K. ImageReward on the first 1,000 of those images.</caption>
+      </table>
+      <ul class="clean" style="margin-top:16px">
+        <li>Activations: per-token symmetric INT8. Weights: per-channel symmetric INT8.</li>
+        <li>Left in FP16: normalization, the linear attention, and the cross-attention key/value projections.</li>
+      </ul>
+    </div>
+    <div>
+      <div class="shot" style="height:560px">
+        <img src="assets/fig-laptop.jpg" alt="A laptop running the SANA demo, with a generated cat and a neon sign reading SANA." style="height:560px;object-fit:cover">
+      </div>
+      <p class="cap">Figure 9, right. The paper’s own laptop deployment photo. Xie and Chen et al., ICLR 2025.</p>
+    </div>
+  </div>
+  <aside class="notes">
+    Short slide. The measurement is a customer-grade 4090 laptop, 1024 images. FP16 is already 0.88 seconds, which meets the “under a second” line before quantization. INT8 takes it to 0.37, a 2.4 times cut. CLIP moves from 28.5 to 28.3. ImageReward moves from 1.03 to 0.96. They call that almost lossless. You can say the CLIP score agrees and the preference model notices. The implementation choice that belongs in a systems seminar: they did not quantize the whole block. Norms stay in FP16. Linear attention stays in FP16. The key and value projections inside cross-attention stay in FP16. What is quantized is the heavy GEMMs, per-token scales on activations and per-channel scales on weights. The fused kernels are CUDA C++, written up on the backup slide, not reproduced as source. The photograph is theirs: the demo UI, flow-dpm-solver selected, 20 steps, and a cat whose sign reads SANA. It is a deployment picture, including the UI, not a clean benchmark crop.
+  </aside>
+</section>
+
+<section id="critical-reading-deep">
+  <p class="kicker">Critical reading · 1 of 2</p>
+  <h2>Failure modes and the assumptions the co-design rests on.</h2>
+  <div class="slide-main critical-deep-layout">
+    <div class="cols cols-2-even critical-deep-cols">
+      <div class="stack">
+        <div class="card rust">
+          <h3>Intricate small text</h3>
+          <p>Prominent signs render cleanly; dense or low-contrast type can still distort characters.</p>
+        </div>
+        <div class="card rust">
+          <h3>Complex anatomy</h3>
+          <p>Overlapping hands, fine fingers, and crowded faces still show occasional artifacts.</p>
+        </div>
+        <div class="card rust">
+          <h3>Mix-FFN dependence</h3>
+          <p>Linear attention without Mix-FFN depthwise convs converges slowly in training (Table 13).</p>
+        </div>
+      </div>
+      <div class="stack">
+        <div class="card">
+          <h3>Spatial redundancy</h3>
+          <p>High-resolution images are redundant enough that a $32\times$ autoencoder can compress them without losing semantic boundaries the DiT must keep.</p>
+        </div>
+        <div class="card">
+          <h3>Prompt rewriting</h3>
+          <p>CHI-based LLM expansion preserves user intent without adding unwanted hallucinated detail.</p>
+        </div>
+      </div>
+    </div>
+    <div class="cols cols-2 critical-deep-examples">
+      <div class="critical-deep-text-stack">
+        <div class="critical-deep-text-item">
+          <div class="shot critical-deep-shot-text"><img src="assets/fig-sana-text.jpg" alt="The word SANA built from flowers on a beach at sunset." style="width:100%;height:100%;object-fit:cover"></div>
+          <p class="cap">Large isolated lettering from the sample gallery. Not a measured text benchmark.</p>
+        </div>
+      </div>
+      <div class="critical-deep-astro-col">
+        <div class="shot critical-deep-shot-astro"><img src="assets/fig-astronaut.jpg" alt="An astronaut in a jungle, a high-resolution paper sample." style="width:100%;height:100%;object-fit:cover"></div>
+        <p class="cap">4K-style detail—gear, foliage, face behind glass. The spatial-redundancy bet in one frame.</p>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">
+    One slide, two lenses, then two pictures that bound the claims. Left column: what success crops do not prove. Short neon words are not dense typography; the conclusion still names text, faces, and hands as hard. Mix-FFN is Table 13: linear attention alone moves FID from 18.7 to 21.5 at 256 pixels; Mix-FFN returns 18.9. Right column: F = 32 at rFID 0.34 with PSNR still behind SDXL; CHI helps in their tables but there is no user study on creative intent. SANA lettering: display type only—do not turn a sample into a metric. Astronaut: fine detail is why 4K matters; it is also where faces and hands still fail if you look closely. Next slide: three limits explicit in the main text—NoPE at 1K, linear attention plus convolution, metrics that disagree.
+  </aside>
+</section>
+
+<section id="limits">
+  <p class="kicker">Critical reading · 2 of 2</p>
+  <h2>Three limits that are in the paper.</h2>
+  <div class="stack">
+    <div class="card">
+      <h3>1 · NoPE is a 1K result</h3>
+      <p>The main text reports no loss from dropping positional embeddings. The 2K finetune puts absolute sin-cos embeddings back, and the 4K finetune interpolates them. Mix-FFN by itself didn't carry the resolution.</p>
+    </div>
+    <div class="card">
+      <h3>2 · Linear attention is incomplete without the convolution</h3>
+      <p>It converges more slowly. Alone, FID 18.7 goes to 21.5. Mix-FFN returns it to 18.9. At 1024 the convolution also gives back the latency linear attention had saved, until the kernels are fused.</p>
+    </div>
+    <div class="card">
+      <h3>3 · The metrics disagree, and the conclusion names the failures</h3>
+      <p>MJHQ FID favors SANA, 5.81 against FLUX-dev’s 10.15. GenEval favors FLUX, and the gap is counting and binding, not color. The conclusion: text, faces, and hands remain hard.</p>
+    </div>
+  </div>
+  <aside class="notes">
+    This is the slide to sound like a reviewer who liked the paper. Three limits, each with a citation inside the document. One: do not leave this room saying they deleted positional embeddings from the 4K model. They deleted them from the 1K recipe, observed no loss, and then put sin-cos embeddings back as soon as they changed resolution. The positive reading is that the embeddings are cheap to reintroduce, 10k steps. The negative reading is that the NoPE claim does not transfer to the resolution the title is about. Two: linear attention is not a free replacement for softmax. The authors say it converges more slowly, and Table 13 shows a real FID hole that only Mix-FFN fills. The systems consequence is on Table 8: the quality fix costs latency at 1024 until fusion. Three: pick the metric and you pick the winner. FID on a Midjourney set likes SANA. GenEval likes FLUX-dev by a little and FLUX-schnell by more, with the damage concentrated in counting and in color-attribute binding. The conclusion is plain about the pictures: text rendering, faces, and hands are still hard. Do not add a head-to-head the paper did not run, such as “SANA loses to FLUX on multi-line text.” Figure 9 shows a short word working. That is all. On safety, hold both sentences. The appendix describes a ShieldGemma-2B prompt filter and says that under a strict threshold it rejected their NSFW prompt tests. The conclusion says the work cannot fully guarantee safety and controllability of the generated content. A prompt filter is not controllability of faces, text, or composition. Say that, and stop. It is enough.
+  </aside>
+</section>
+
+<section id="conclusion">
+  <p class="kicker">Conclusion</p>
+  <h2>What they claim, and what they leave open.</h2>
+  <div class="cols cols-2 conclusion-cols">
+    <div class="card teal">
+      <div>
+        <h3>The pipeline</h3>
+        <p>Deep compression, linear attention, a decoder-only text encoder with complex human instructions, automatic captions, and Flow-DPM-Solver.</p>
+        <p class="stat">4096×4096</p>
+        <p>Throughput more than 100× higher than the SOTA methods. Quality they call competitive.</p>
+      </div>
+      <p class="note">106× is FLUX-dev at 1023 s over 9.6 s. The DiT ablation is 469 s to 9.6 s.</p>
+    </div>
+    <div class="stack">
+      <div class="card">
+        <h3>Video</h3>
+        <p>They will consider an efficient video generation pipeline based on this model.</p>
+      </div>
+      <div class="card rust">
+        <h3>Safety</h3>
+        <p>They cannot fully guarantee the safety and controllability of the generated content.</p>
+      </div>
+      <div class="card rust">
+        <h3>Still hard</h3>
+        <p>Text rendering, faces, and hands remain hard.</p>
+      </div>
+    </div>
+  </div>
+  <aside class="notes">
+    This is Section 5, after you have already been the reviewer. Do not re-teach the five pieces. Left side is their claim in one breath: compression, linear attention, a decoder-only text encoder with complex human instructions, the caption pipeline, and Flow-DPM-Solver. Then the resolution they want remembered, 4096. Then their throughput sentence. Read the note so the room does not collapse the denominators: 106 times is FLUX-dev, 1023 seconds over 9.6, on one A100 in FP16. The DiT ablation is 469 seconds down to 9.6, a different comparison. Right side is the paragraph they end on. Video: they say they will consider an efficient video pipeline—note it as future work. Forward-link to discussion question three on CHI and intent if you want a bridge from the caption pipeline. Safety: the conclusion says they cannot fully guarantee safety and controllability. The appendix describes a ShieldGemma-2B prompt filter. A prompt filter is not controllability of faces, text, or composition. Still hard: text, faces, and hands, in their words, which the previous slides already showed. Then go to the questions.
+  </aside>
+</section>
+
+<section id="discussion">
+  <p class="kicker">Discussion</p>
+  <h2>Three questions worth the remaining time.</h2>
+  <div class="q"><div class="n">1</div><p><strong>Attention trade-offs.</strong> SANA trades $\mathcal{O}(N^{2})$ Softmax attention for $\mathcal{O}(N)$ linear attention plus depthwise convolutions. Under what image generation scenarios or prompt types might linear attention struggle compared to full Softmax attention?</p></div>
+  <div class="q"><div class="n">2</div><p><strong>Compression responsibility.</strong> Previous architectures split spatial compression between the VAE ($8\times$) and DiT patchification ($P=2$). SANA shifts all spatial compression into the VAE ($32\times$, $P=1$). What are the architectural and training risks of placing every compression step on the autoencoder?</p></div>
+  <div class="q"><div class="n">3</div><p><strong>LLM prompt rewriting and intent.</strong> SANA uses Gemma-2 and Complex Human Instruction (CHI) to rewrite short user prompts into detailed scene descriptions. Does automatic expansion risk hallucinating unrequested elements or altering user intent? How could we measure intent preservation quantitatively?</p></div>
+  <aside class="notes">
+    Read each question once, then be quiet. Question one — hint if the room stalls: tasks that need global non-linear relational reasoning across distant pixels, such as precise symmetry, global counting, or complex spatial relative positions. Table 13 is your anchor: at 256 pixels and 52k steps, linear attention alone raises FID from 18.7 to 21.5; Mix-FFN brings 18.9, still not identical to full attention at 18.7. The depthwise conv is local; linear attention is a kernel trick, not a softmax reweighting of every pair. Question two — hint: if the VAE encoder drops high-frequency texture during pre-training, can the DiT recover information the VAE compressed away? Walk them through the same-token ablation and rFID 0.34 versus SDXL: the paper bets a small reconstruction gap will not cap generation, but rFID is not a small-text probe. If detail never enters $z$, the denoiser is drawing from a conditional that lacks the answer. Question three — hint: contrast automatic CHI expansion with user-controlled negative prompts or direct adherence metrics. The cat grid and Figure 13 show added scene detail; ShieldGemma filters unsafe prompts but does not audit rewrites. Brainstorm metrics: attribute checklists against the original prompt, human ratings of intent drift, embedding similarity original versus expanded, GenEval on deliberately minimal prompts. If time remains, ask whether FLUX-dev was the right 106× denominator once schnell sits in the same table.
+  </aside>
+</section>
+
+<section id="close">
+  <p class="kicker">Close</p>
+  <p class="title-meta">Xie, Chen, et al. SANA: Efficient High-Resolution Image Synthesis with Linear Diffusion Transformers.<br>arXiv:2410.10629 · nvlabs.github.io/Sana</p>
+  <ul class="clean close-refs">
+    <li>Xie, Chen, et al. SANA. ICLR 2025. arXiv:2410.10629. The DC-AE companion is Chen et al., arXiv:2410.10733.</li>
+    <li>Katharopoulos et al. 2020. Transformers are RNNs. The ReLU linear attention identity.</li>
+    <li>Cai et al. 2023, EfficientViT, for Mix-FFN. Islam, Jia, and Bruce 2020, for position in zero-padded convolutions.</li>
+    <li>Lipman et al. 2022, flow matching. Esser et al. 2024, SD3, for rectified flow at scale and the timestep shift. Lu et al. 2022, DPM-Solver++.</li>
+    <li>Ma et al. 2024, LiDiT, the simple-instruction baseline. Ghosh et al., GenEval. Hu et al., DPG-Bench.</li>
+  </ul>
+  <aside class="notes">
+    Land on one sentence and offer the floor. Most of the 4K win is fewer tokens, because the autoencoder took the spatial compression away from the transformer. Linear attention is the right tool once N is far above d, which at this width means 4K, not 1024. The sampler is a useful 2 times on top of a network that is already small. Thank them, point at the arXiv id and the reference list if someone asks for a citation. Project and code: nvlabs.github.io/Sana, github.com/NVlabs/Sana. Later SANA-1.5, Sprint, and video models are not this talk unless they ask. Stop talking. If the discussion is thin, use question one on attention trade-offs or question three on CHI and intent preservation.
+  </aside>
+</section>
+
+<section class="backup-slide" id="backup-title" data-visibility="uncounted">
+  <p class="kicker">Backup</p>
+  <h2>After the close.</h2>
+  <p class="lede">Kernel fusion, the CHI prompt, flow matching near the prior, the solver’s three edits, model widths, the text-encoder table, GenEval by category, and the resolution sweep.</p>
+  <aside class="notes">
+    Pick the slide the question asked for. Do not tour these.
+  </aside>
+</section>
+
+<section class="backup-slide" id="kernels" data-visibility="uncounted">
+  <p class="kicker">Backup · kernels</p>
+  <h2>Two fusions, described. Neither is reproduced here as source.</h2>
+  <div class="cols cols-2">
+    <div class="card">
+      <h3>Triton, training and inference</h3>
+      <p>Forward: ReLU is fused onto the end of the QKV projection. Casts and padding are fused onto the start of the KV and QKV multiplies. The division is fused onto the end of the QKV multiply.</p>
+      <p>Backward: the division fuses into the output projection, and the casts and ReLU fuse onto the ends of the KV and QKV multiplies.</p>
+    </div>
+    <div class="card">
+      <h3>CUDA C++, the W8A8 deployment</h3>
+      <p>The ReLU(K) transpose times V product is fused into the QKV GEMM, so K and V are not round-tripped through DRAM.</p>
+      <p>Inside Mix-FFN, the GLU is fused with the quantization kernel. Other elementwise ops are fused the same way. Activation layout is chosen so the GEMMs and convolutions do not transpose.</p>
+    </div>
+  </div>
+  <p class="note" style="margin-top:18px">Figure 2’s 1.1×, from 24 seconds to 21, is the Triton step on the 4K waterfall. The 2.4× on the laptop is the separate W8A8 stack.</p>
+  <aside class="notes">
+    Only open this if a systems student asks what “kernel fusion” points at. There are two different fusions and the paper keeps them apart. Triton is about the linear-attention block in training and in inference: elementwise work, ReLU, casts, padding, and the division, gets pulled into the surrounding matrix multiplies so those tensors do not hit memory. That is the 24 second to 21 second step, 1.1 times, on the 4K waterfall. The laptop path is a different codebase. They wrote W8A8 GEMM in CUDA C++. The distinctive fusion there is the K transpose V accumulation of linear attention, folded into the QKV projection, plus the GLU folded into the quantize kernel inside Mix-FFN. You do not have their kernel source on this slide, and you should not pretend a pseudocode sketch is theirs. If they want the code, it is the public SANA repository, and even there the useful description is the paper’s paragraphs rather than a single fused listing. Remind the room what stayed in FP16: norms, linear attention, cross-attention KV projections.
+  </aside>
+</section>
+
+<section class="backup-slide" id="chi" data-visibility="uncounted">
+  <p class="kicker">Backup · Figure 13</p>
+  <h2>The complex human instruction, in their words.</h2>
+  <div class="card" style="font-size:20px;line-height:1.35">
+    <p>Given a user prompt, generate an “Enhanced prompt” that provides detailed visual descriptions suitable for image generation. Evaluate the level of detail in the user prompt.</p>
+    <p>If the prompt is simple, add specifics about colors, shapes, sizes, textures, and spatial relationships. If the prompt is already detailed, refine it slightly and do not overcomplicate it.</p>
+    <p>Example. “A cat sleeping” becomes “A small, fluffy white cat curled up in a round shape, sleeping peacefully on a warm sunny windowsill, surrounded by pots of blooming red flowers.”</p>
+    <p>The template then gives a second example, a city street at dusk, and ends: generate only the enhanced description, with no commentary. The user prompt follows.</p>
+  </div>
+  <p class="note" style="margin-top:14px">Without the template, Gemma answers a short prompt by asking questions, as in a chat. With it, Gemma emits one visual paragraph. That paragraph is what gets embedded. Early GenEval, on a 0–100 scale: 45.5 to 47.7 at 52k steps.</p>
+  <aside class="notes">
+    Read only as much as the question needs. The template does two jobs. It tells an instruct model to write a picture, not to interview the user. Figure 13 shows the failure mode: prompt “a man is walking,” and Gemma without CHI asks where he is walking and what the weather is. With CHI, the same prompt becomes a man in a worn leather jacket on a cobblestone street at sunset. The embedding is of that paragraph. The second job is in-context learning: one or two examples of the rewrite, so the model copies the format. LiDiT used a shorter instruction and finetuned the language model. Table 10 is the small finetune horse-race, CHI 0.642 against simple instructions 0.626 after 5,000 steps. The early from-scratch number, plus 2.2 on the 0 to 100 table at 52k steps, is the same effect before the model has saturated. The full second example, the city street, is in the paper’s Figure 13 if someone wants it verbatim. You have paraphrased the instruction and quoted the cat example, which is enough to see the mechanism.
+  </aside>
+</section>
+
+<section class="backup-slide" id="tweedie" data-visibility="uncounted">
+  <p class="kicker">Backup · Appendix B</p>
+  <h2>Why noise prediction integrates badly near the prior.</h2>
+  <div class="eq">$$\nabla_{x_t}\log q_t(x_t)=-\frac{x_t-\alpha_t\,\mathbb{E}[x_0\mid x_t]}{\sigma_t^2}$$</div>
+  <p>Tweedie, as they use it. As t approaches T, x0 and xt become independent, so the conditional expectation is just the data mean. The optimal noise predictor turns into a linear function of xt:</p>
+  <div class="eq">$$\epsilon_\theta(x_t,t)\approx\frac{x_t-\alpha_t\,\mathbb{E}[x_0]}{\sigma_t}$$</div>
+  <p>Subtract that linear piece and what remains is a data predictor, which near the prior is approximately the constant E[x0]. A multistep integrator accumulates much less error on a constant than on a line. Flow-DPM-Solver puts the velocity model into that data coordinate before integrating. They also cite Balaji et al.: attention activations are strongest near t = T, so this is exactly where an error is expensive.</p>
+  <aside class="notes">
+    This is Appendix B, not an outside derivation. Walk Tweedie once. The score is minus xt minus alpha times the posterior mean of x0, over sigma squared. At the last time, the posterior over x0 forgets xt, so the posterior mean is the unconditional mean. Plug that in and the optimal denoiser is linear in xt. Lu’s thesis, which they cite, points out that a first step error at t equals T is then baked into every later step. DPM-Solver’s move is to cancel the linear part and integrate the data prediction, which has become a constant. SANA’s extra line is that their network outputs velocity, so they convert v to x0 with x minus sigma v, and only then call the solver. If someone wants the shifted-sigma formula, it is on the next slide.
+  </aside>
+</section>
+
+<section class="backup-slide" id="solver" data-visibility="uncounted">
+  <p class="kicker">Backup · Algorithm 1</p>
+  <h2>Three edits to DPM-Solver++. The rest of the update is unchanged.</h2>
+  <div class="stack">
+    <div class="card"><h3>Time</h3><p>Steps live in [0, 1], not [1, 1000]. A shift s, taken from the SD3 schedule, sets σ̃ = sσ / (1 + (s − 1)σ), and α = 1 − σ̃.</p></div>
+    <div class="card"><h3>Readout</h3><p>The network predicts velocity. The solver is handed a data prediction: xθ = x̃ − σ̃ vθ(x̃, t).</p></div>
+    <div class="card"><h3>Update</h3><p>From the second step on, the multistep corrector is the usual DPM-Solver++ combination of the two previous data predictions. Figure 10 shows that solver already stable at 14 and 20 steps, where Euler at 50 is the reference.</p></div>
+  </div>
+  <aside class="notes">
+    Do not copy the algorithm onto the board. Name the three colored lines in their Algorithm 1. First, hyperparameters: sigma is shifted by s, alpha is one minus the shifted sigma. Second, model output: velocity becomes x0 by subtracting sigma times v. Third, the loop itself is DPM-Solver++ in that coordinate, with the half-step corrector built from the previous two data predictions. Figure 10 is the visual companion to Figure 8: Euler at 50 steps against their solver at 5, 8, 14, and 20. They say 10 to 20 steps is enough for a stable image, and Euler wants 30 to 50. You already quoted 14 to 20 in the main talk. Use this slide only if someone asks what “adapted DPM-Solver” means mechanically.
+  </aside>
+</section>
+
+<section class="backup-slide" id="widths" data-visibility="uncounted">
+  <p class="kicker">Backup · Table 6</p>
+  <h2>Both models stay shallow. Width does the scaling.</h2>
+  <table class="grid">
+    <thead>
+      <tr><th></th><th class="num">Width</th><th class="num">Depth</th><th class="num">FFN</th><th class="num">Heads</th><th class="num">Params</th></tr>
+    </thead>
+    <tbody>
+      <tr class="ours"><td>SANA-0.6B</td><td class="num">1152</td><td class="num">28</td><td class="num">2880</td><td class="num">36</td><td class="num">590M</td></tr>
+      <tr class="ours"><td>SANA-1.6B</td><td class="num">2240</td><td class="num">20</td><td class="num">5600</td><td class="num">70</td><td class="num">1604M</td></tr>
+    </tbody>
+    <caption>0.6B matches DiT-XL and PixArt-Σ in depth and width. They argue 20 to 30 layers is the efficiency knee. 1.6B is wider and shallower, not deeper.</caption>
+  </table>
+  <p style="margin-top:22px">Head dimension is 1152 / 36 = 32 on the small model, and 2240 / 70 = 32 on the large one. The linear-attention state is still d by d on the full width, not per head, in the formula they write. The implementation detail of whether S is per-head is not separated out in the paper.</p>
+  <aside class="notes">
+    Useful if someone asks “what is 0.6B in layers.” It is a DiT-XL shape: width 1152, depth 28, FFN 2880, 36 heads, 590 million parameters. The 1.6B model goes wider, to 2240, and shallower, to 20 layers, with a 5600-wide FFN and 70 heads, 1.604 billion parameters. The authors explicitly say they want depth between 20 and 30. Head size stays 32. One caution you should say if a specialist asks: the linear-attention equation is written on the full d by d state. A fused kernel might still split heads. The paper does not give you a separate per-head complexity, so do not invent one. The order-of-magnitude comparison in the main talk uses the full width, which is the conservative, larger state.
+  </aside>
+</section>
+
+<section class="backup-slide" id="text-table" data-visibility="uncounted">
+  <p class="kicker">Backup · Table 9</p>
+  <h2>Instruct-tuned Gemma matches T5-XXL. The base model does not.</h2>
+  <table class="grid">
+    <thead>
+      <tr><th>Encoder, 50k steps, A100 FP16</th><th class="num">Params</th><th class="num">Latency</th><th class="num">FID</th><th class="num">CLIP</th><th class="num">GenEval</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>T5-XXL</td><td class="num">4762M</td><td class="num">1.61s</td><td class="num">6.1</td><td class="num">27.1</td><td class="num">0.51</td></tr>
+      <tr><td>T5-Large</td><td class="num">341M</td><td class="num">0.17s</td><td class="num">6.1</td><td class="num">26.2</td><td class="num">0.39</td></tr>
+      <tr><td>Gemma-2-2B</td><td class="num">2614M</td><td class="num">0.28s</td><td class="num">6.0</td><td class="num">26.9</td><td class="num">0.45</td></tr>
+      <tr class="ours"><td>Gemma-2-2B-IT. This is SANA.</td><td class="num">2614M</td><td class="num">0.28s</td><td class="num">6.1</td><td class="num">26.9</td><td class="num">0.50</td></tr>
+    </tbody>
+    <caption>Early-training comparison, not the final 0.64 GenEval model. IT is instruct-tuned. The appendix says the instruct variant follows prompts better, and the table agrees.</caption>
+  </table>
+  <aside class="notes">
+    Use this if someone says “any 2B language model would have done.” At 50,000 steps, T5-Large is fast, 0.17 seconds, and collapses GenEval to 0.39. Base Gemma-2-2B is 0.45. Instruct-tuned Gemma-2-2B-IT is 0.50, against T5-XXL at 0.51, and it is six times faster than T5-XXL. FID and CLIP are essentially tied across the big encoders. So the win they are allowed to claim is: same early alignment as T5-XXL, much less latency, and the instruct tune is doing something the raw pretrained Gemma is not. HPSv2 in the same table is also flat, about 27.9 for both T5-XXL and Gemma-2-2B-IT. Do not quote these GenEval numbers as the final model. Final SANA-0.6B is 0.64 after the full schedule and CHI.
+  </aside>
+</section>
+
+<section class="backup-slide" id="geneval" data-visibility="uncounted">
+  <p class="kicker">Backup · Table 11, 1024</p>
+  <h2>The GenEval gap is counting and binding. Color goes the other way.</h2>
+  <table class="grid">
+    <thead>
+      <tr><th></th><th class="num">Two</th><th class="num">Count</th><th class="num">Color</th><th class="num">Position</th><th class="num">Attr.</th><th class="num">All</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>SD3-medium</td><td class="num">0.74</td><td class="num">0.63</td><td class="num">0.67</td><td class="num">0.34</td><td class="num">0.36</td><td class="num">0.62</td></tr>
+      <tr><td>DALL·E 3</td><td class="num">0.87</td><td class="num">0.47</td><td class="num">0.83</td><td class="num">0.43</td><td class="num">0.45</td><td class="num">0.67</td></tr>
+      <tr><td>FLUX-dev</td><td class="num">0.81</td><td class="num">0.79</td><td class="num">0.74</td><td class="num">0.20</td><td class="num">0.47</td><td class="num">0.67</td></tr>
+      <tr><td>FLUX-schnell</td><td class="num">0.92</td><td class="num">0.73</td><td class="num">0.78</td><td class="num">0.28</td><td class="num">0.54</td><td class="num">0.71</td></tr>
+      <tr class="ours"><td>SANA-0.6B</td><td class="num">0.76</td><td class="num">0.64</td><td class="num">0.88</td><td class="num">0.18</td><td class="num">0.39</td><td class="num">0.64</td></tr>
+      <tr class="ours"><td>SANA-1.6B</td><td class="num">0.77</td><td class="num">0.62</td><td class="num">0.88</td><td class="num">0.21</td><td class="num">0.47</td><td class="num">0.66</td></tr>
+    </tbody>
+    <caption>Single-object scores are 0.96 to 0.99 for every row here, so they are omitted. SANA-0.6B’s overall in Table 7 is 0.64; the category rows are the appendix’s finer cut. Position is weak for FLUX and for SANA. DALL·E 3 is the position outlier, and it is weak on counting.</caption>
+  </table>
+  <aside class="notes">
+    This is how you answer “GenEval 0.64 versus 0.67, is that noise?” Look inside. Single object is saturated, around 0.99, for SANA and for both FLUX models, so it is not the story. Two-object is 0.76 against FLUX-dev’s 0.81 and schnell’s 0.92. Counting is the clearest hole: 0.64 against 0.79 for FLUX-dev. Color goes the other way: SANA 0.88, FLUX-dev 0.74, schnell 0.78. Position is poor for SANA, 0.18, and also poor for FLUX-dev, 0.20. Schnell is 0.28. DALL-E 3 is 0.43, in a different league, and DALL-E 3 is bad at counting, 0.47. Color attribution, the binding question, is 0.39 for SANA-0.6B and 0.47 for both SANA-1.6B and FLUX-dev. So scaling SANA from 0.6 to 1.6 fixed binding and did not fix counting. That is a more interesting sentence than the overall delta of 0.03. One bookkeeping note: Table 7 lists SANA-0.6B overall at 0.64, and this appendix table is the per-category view. If a category average does not reproduce 0.64 to the last digit, quote Table 7 for the headline and this table for the breakdown.
+  </aside>
+</section>
+
+<section class="backup-slide" id="sweep" data-visibility="uncounted">
+  <p class="kicker">Backup · Table 15 and Figure 1</p>
+  <h2>SD3, Hunyuan, and the 1.6B row, if someone asks.</h2>
+  <table class="grid">
+    <thead>
+      <tr><th>Latency, batch 1, A100 FP16</th><th class="num">512</th><th class="num">1024</th><th class="num">2048</th><th class="num">4096</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>FLUX-dev</td><td class="num">7.9s</td><td class="num">23s</td><td class="num">117s</td><td class="num">1023s</td></tr>
+      <tr><td>FLUX-schnell</td><td class="num">0.7s</td><td class="num">2.1s</td><td class="num">10.5s</td><td class="num">76s</td></tr>
+      <tr><td>SD3</td><td class="num">1.4s</td><td class="num">4.4s</td><td class="num">22s</td><td class="num">230s</td></tr>
+      <tr><td>PixArt-Σ</td><td class="num">1.2s</td><td class="num">2.7s</td><td class="num">18.1s</td><td class="num">186s</td></tr>
+      <tr><td>Hunyuan-DiT</td><td class="num">5.1s</td><td class="num">18s</td><td class="num">96s</td><td class="num">861s</td></tr>
+      <tr class="ours"><td>SANA-0.6B</td><td class="num">0.8s</td><td class="num">0.9s</td><td class="num">2.5s</td><td class="num">9.6s</td></tr>
+      <tr class="ours"><td>SANA-1.6B</td><td class="num">0.6s</td><td class="num">1.2s</td><td class="num">4.1s</td><td class="num">15.9s</td></tr>
+    </tbody>
+    <caption>The talk slide already showed dev, schnell, PixArt-Σ, and SANA-0.6B. SANA-1.6B at 4096 is Figure 1’s 15.9 seconds. Table 15 prints 5.9s in that cell, which disagrees with the 0.066 img/s beside it. 0.6B at 0.104 img/s is 1/9.6.</caption>
+  </table>
+  <aside class="notes">
+    Open this only when someone asks for a model the talk slide left off, or for the 1.6B checkpoint. Do not re-walk dev, schnell, PixArt-Sigma, and SANA-0.6B; that ladder was the previous results slide. SD3 at 4096 is 230 seconds. Hunyuan-DiT is 861, essentially tied with FLUX-dev’s throughput of 0.001 images per second. SANA-1.6B is 0.6 seconds at 512, 1.2 at 1024, 4.1 at 2048, and 15.9 at 4096. The 15.9 is the teaser, Figure 1. Table 15’s 4K latency cell for 1.6B reads 5.9 and would make the larger model faster than the 0.6B, which also disagrees with 0.066 images per second in the throughput column. 1 over 0.066 is about 15 seconds, so 15.9 and 0.066 belong together. 0.6B at 0.104 images per second is exactly 1 over 9.6, a batch-1 rate.
+  </aside>
+</section>
+
+</div>
+</div>
+<script src="vendor/reveal/dist/reveal.js"></script>
+<script src="vendor/reveal/plugin/notes/notes.js"></script>
+<script src="vendor/reveal/plugin/math/math.js"></script>
+<script>
+  Reveal.initialize({
+    width: 1920,
+    height: 1080,
+    margin: 0.02,
+    minScale: 0.2,
+    maxScale: 2,
+    hash: true,
+    slideNumber: 'c/t',
+    transition: 'fade',
+    transitionSpeed: 'fast',
+    backgroundTransition: 'none',
+    center: false,
+    controls: true,
+    progress: true,
+    plugins: [RevealNotes, RevealMath.KaTeX],
+    katex: {
+      local: 'vendor/katex',
+      ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'aside'],
+      delimiters: [
+        { left: '$$', right: '$$', display: true },
+        { left: '$', right: '$', display: false }
+      ]
+    }
+  }).then(function () {
+    document.querySelectorAll('.slides > section').forEach(function (sec) {
+      sec.querySelectorAll('table.grid > caption').forEach(function (cap) {
+        var p = document.createElement('p');
+        p.className = 'cap slide-caption';
+        p.innerHTML = cap.innerHTML;
+        var table = cap.parentElement;
+        cap.remove();
+        if (table.parentElement && table.parentElement.classList.contains('cols')) {
+          var aside = sec.querySelector('aside.notes');
+          if (aside) {
+            sec.insertBefore(p, aside);
+          } else {
+            sec.appendChild(p);
+          }
+        } else {
+          table.insertAdjacentElement('afterend', p);
+        }
+      });
+    });
+    document.querySelectorAll('.slides > section').forEach(function (sec) {
+      var foot = document.createElement('div');
+      foot.className = 'footer';
+      foot.innerHTML = '<span>Computer Vision and Pattern Recognition</span><span>Piotr Pasula</span>';
+      sec.appendChild(foot);
+    });
+  });
+</script>
+</body>
+</html>

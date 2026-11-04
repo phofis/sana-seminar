@@ -1,0 +1,47 @@
+flowchart LR
+  subgraph textPath["Text path · Fig. 3a"]
+    direction TB
+    UP["User prompt"]
+    CHI["Complex Human Instruction"]
+    LLM["Small LLM · Gemma-2-2B-IT<br/>(frozen)"]
+    RN["RMSNorm + scale γ = 0.01"]
+    TXT["Text embeddings<br/>(cross-attn K/V)"]
+    UP --> CHI --> LLM --> RN --> TXT
+  end
+
+  subgraph cond["Conditioning · Fig. 3a"]
+    direction TB
+    TE["Time embedding"]
+    PE["Pos embedding<br/>(dashed in figure · NoPE at 1K)"]
+  end
+
+  subgraph latentPath["Latent path · inference"]
+    direction TB
+    ZT["Noise latent z_T<br/>32 × 32 × 32 at 1K<br/>F = 32, C = 32, P = 1"]
+    subgraph dit["Linear DiT · N × blocks"]
+      direction LR
+      LA["Linear Attn<br/>ReLU · O(N)"]
+      CA["Cross Attn"]
+      MF["Mix-FFN<br/>3 × 3 depthwise conv"]
+      LA --> CA --> MF
+    end
+    Z0["Denoised latent z_0"]
+    ZT --> LA
+    MF --> Z0
+  end
+
+  subgraph sampler["Sampler · added for inference"]
+    FDP["Flow-DPM-Solver<br/>14–20 steps · velocity"]
+  end
+
+  subgraph decode["Decode · Fig. 3a trapezoid"]
+    DEC["DC-AE decoder · 32×"]
+    IMG["RGB image<br/>1024² · 2K/4K finetunes"]
+    DEC --> IMG
+  end
+
+  TXT -.->|"cross-attn"| CA
+  TE --> CA
+  PE -.->|"optional"| LA
+  FDP -->|"iterative denoise"| dit
+  Z0 --> DEC

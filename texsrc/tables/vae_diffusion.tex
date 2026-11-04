@@ -1,0 +1,22 @@
+\begin{table}[th]
+    \centering
+    \caption{\textbf{\footnotesize Comparison of the impact of different VAE configurations on diffusion model performance.} 
+    We explore factors such as latent size, VAE-diffusion compression ratios, and VAE channel variations. \ligeng{no longer need, remove}}
+    \label{tab:vae_comparison}
+    \resizebox{0.4\linewidth}{!}{ 
+    \begin{tabular}{lccc}
+        \toprule
+        \textbf{VAE} & \textbf{rFID} & \textbf{FID} & \textbf{CLIP} \\
+        \midrule
+        F8C16P4+EDiT & 0.0884 & 21.9 & 24.1 \\
+        F16C32P2+EDiT & 0.1618 & 13.7 & 24.6 \\
+        F32C32P1+EDiT & 0.3421 & 7.3 & 25.8 \\
+        \midrule
+        F32C16P1+EDiT & 0.8649 & 7.2 & 25.8 \\
+        F32C32P1+EDiT & 0.4608 & 7.3 & 25.8 \\
+        F32C64P1+EDiT & 0.3141 & 10.6 & 25.3 \\
+        \bottomrule
+    \end{tabular}
+    }
+    \vspace{-1em}
+\end{table}

@@ -1,0 +1,20 @@
+\begin{table}[htbp]
+    \centering
+    \caption{Comparison of various T5 models and Gemma models based on speed and parameters. The sequence length (Seq Len) is the number of text tokens.}
+    \label{tab:appendix_text_encoder_speed}
+    \scalebox{0.8}{
+    \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Text Encoder} & \textbf{Batch Size} & \textbf{Seq Len} & \textbf{Latency~(s)} & \textbf{Params~(M)} \\
+    \midrule
+    T5-XXL & \multirow{6}{*}{32} & \multirow{6}{*}{300} & 1.6 & 4762 \\
+    T5-XL  & & & 0.5 & 1224 \\
+    T5-large & &  & 0.2 & 341 \\
+    T5-base & &  & 0.1 & 110 \\
+    T5-small & &  & 0.0 & 35 \\
+    Gemma-2b & &  & 0.2 & 2506 \\
+    Gemma-2-2b & & & 0.3 & 2614 \\
+    \bottomrule
+    \end{tabular}
+    }
+\end{table}

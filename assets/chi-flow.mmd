@@ -1,0 +1,26 @@
+flowchart TB
+  subgraph chiPath["CHI · in-context prompt expansion"]
+    direction TB
+    UP["User prompt<br/>“A cat and a dog.”"]
+    CHI["CHI system template<br/>+ in-context examples"]
+    GEM["Gemma-2-2B-IT · frozen"]
+    OUT["Enhanced output<br/>fluffy kitten beside golden puppy<br/>on a sunlit porch with red flowers…"]
+    UP --> CHI --> GEM --> OUT
+  end
+
+  RN["RMSNorm → unit variance<br/>× learnable γ, γ_init = 0.01"]
+  DIT["Linear DiT · cross-attention K/V"]
+
+  OUT --> RN --> DIT
+
+  classDef userNode fill:#f8ebe4,stroke:#9a3412,color:#1c1917,stroke-width:2px
+  classDef chiNode fill:#fef3c7,stroke:#8a5a12,color:#1c1917,stroke-width:2px
+  classDef llmNode fill:#e5f2f1,stroke:#0f5f5c,color:#1c1917,stroke-width:2px
+  classDef stabNode fill:#ffffff,stroke:#0b3f3d,color:#1c1917,stroke-width:2px
+
+  class UP userNode
+  class CHI chiNode
+  class GEM,OUT llmNode
+  class RN,DIT stabNode
+
+  style chiPath fill:#faf9f7,stroke:#e6e0d6,color:#0f5f5c

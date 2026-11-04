@@ -1,0 +1,134 @@
+\documentclass{article} % For LaTeX2e
+\usepackage{iclr2025_conference,times}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+\definecolor{linkc}{rgb}{0, 0.44, 0.74}
+\definecolor{eqc}{rgb}{1, 0, 0}
+\definecolor{newcitecolor}{rgb}{0,0.6,0}
+\usepackage[pagebackref=false,breaklinks=true,colorlinks=True,urlcolor=eqc,citecolor=linkc,linkcolor=eqc,bookmarks=false]{hyperref}
+\usepackage{url}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{wrapfig}
+\usepackage{amsmath}
+\usepackage{xspace}
+\usepackage{textgreek}
+\usepackage{bm}
+\usepackage{multirow}
+\usepackage[accsupp]{axessibility}  % Improves PDF readability for those with disabilities.
+% \usepackage[dvipsnames]{xcolor}
+\usepackage{colortbl}
+\usepackage{orcidlink}
+\usepackage{footmisc}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{listings}
+\usepackage{graphicx}
+\usepackage{caption}
+
+\newcommand{\ligeng}[1]{\textcolor{brown}{[ligeng: #1]}}
+\newcommand{\cjs}[1]{\textcolor{red}{[junsong: #1]}}
+\newcommand{\enze}[1]{\textcolor{blue}{[enze: #1]}}
+\newcommand{\jy}[1]{\textcolor{pink}{[Junyu: #1]}}
+\newcommand{\tht}[1]{\textcolor{green}{[Haotian: #1]}}
+\newcommand{\cai}[1]{\textcolor{orange}{[CAI: #1]}}
+\newcommand{\SH}[1]{\textcolor{orange}{[SH: #1]}}
+\newcommand{\sota}[1]{\cellcolor{pearDark!20}{#1}}
+\definecolor{mygreen}{RGB}{34,139,34}
+\definecolor{mylightblue}{RGB}{0,162,230}
+\definecolor{deepyellow}{RGB}{255, 215, 0} 
+\definecolor{nvidiagreen}{RGB}{118, 185, 0}
+
+\newcommand{\model}{Sana\xspace}
+\newcommand{\method}{Sana\xspace}
+\newcommand{\methodshort}{Sana\xspace}
+\newcommand{\pre}{\textsc{$\alpha$}\xspace}
+\newcommand{\now}{\textsc{\textSigma{}}\xspace}
+
+\makeatletter
+\def\blfootnote#1{\xdef\@thefnmark{}\@footnotetext{\scriptsize #1}}
+\makeatother
+
+\title{\model: Efficient High-Resolution Image Synthesis with Linear Diffusion Transformers}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \iclrfinalcopy macro remains commented out below.
+% Non-anonymous submissions will be rejected without review.
+
+\author{%
+  Enze Xie$^{1*}$,\space\space\space
+  Junsong Chen$^{1*}$,\space\space\space
+  Junyu Chen$^{2,3}$,\space\space\space
+  Han Cai$^{1}$,\space\space\space
+  Haotian Tang$^{2}$,
+  \\
+  % \\
+  \textbf{Yujun Lin$^{2}$,\space\space\space
+  \vspace{0.15cm}
+  Zhekai Zhang$^{2}$,\space\space\space
+  Muyang Li$^{2}$,\space\space\space
+  Ligeng Zhu$^{1}$,\space\space\space
+  Yao Lu$^{1}$,\space\space\space
+  Song Han$^{1,2}$\space\space\space
+  }
+  \\
+  $^{1}$\normalfont{NVIDIA}\quad
+  $^{2}$\normalfont{MIT}\quad
+  % \\
+  $^{3}$\normalfont{Tsinghua University}\quad 
+  \\
+  \vspace{0.1em}
+  {Project Page: \hypersetup{urlcolor=nvidiagreen}
+    \textbf{\href{https://nvlabs.github.io/Sana}{nvlabs.github.io/Sana}}}
+}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to \LaTeX{} to determine where to break
+% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
+% puts 3 of 4 authors names on the first line, and the last on the second
+% line, try using \AND instead of \And before the third author name.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+% \preprint
+\iclrfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+\begin{document}
+\maketitle
+
+\blfootnote{$*$ Project co-lead.}
+
+\input{sections/0_abstract}
+
+\input{sections/1_introduction}
+
+\input{sections/3_methods}
+
+\input{sections/4_exps}
+
+\input{sections/2_related_work}
+
+\input{sections/5_conclusion}
+
+\noindent \textbf{Acknowledgements.}  
+We would like to thank Shuchen Xue from UCAS, Cheng Lu from OpenAI, Jincheng Yu from HKUST, and Chongjian Ge from HKU for discussions and data collection.
+
+% \clearpage
+
+\bibliography{main}
+\bibliographystyle{main}
+
+\clearpage
+
+% You may include other additional sections here.
+\appendix
+
+\input{sections/6_supp}
+
+\end{document}

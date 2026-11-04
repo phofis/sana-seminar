@@ -1,0 +1,23 @@
+\begin{table}[t]
+    \centering
+    \caption{\textbf{Performance of \model block design space.} 
+    We train all the models with the same training setting with 52K iterations. 
+    } 
+    \label{tab:appendix_blocks_ablation}
+    \scalebox{0.9}{ 
+    \begin{tabular}{lccccc}
+        \toprule
+        Blocks & AE & Res. & FID~$\downarrow$ & CLIP~$\uparrow$ \\
+        \midrule
+        FullAttn \& FFN & F8C4P2 & 256 & 18.7 & 24.9 \\
+        ~~~+ Linear & F8C4P2 & 256 & 21.5 & 23.3 \\
+        ~~~~~~~+ MixFFN & F8C4P2 & 256 & 18.9 & 24.8 \\
+        ~~~~~~~~~~~+ Kernel Fusion & F8C4P2 & 256 & 18.8 & 24.8 \\
+        \midrule
+        Linear+GLUMBConv2.5 & F32C32P1 & 512 & 6.4 & 27.4 \\
+        ~~~~+ Kernel Fusion & F32C32P1 & 512 & 6.4 & 27.4 \\
+        \bottomrule
+        \end{tabular}
+    }
+    \vspace{-1em}
+\end{table}

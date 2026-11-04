@@ -1,0 +1,19 @@
+\begin{wraptable}{r}{0.5\columnwidth}
+\centering
+\caption{\textbf{Ablation study of whether using Complex Human Instruction (CHI).}}
+\label{tab:ablation_chi}
+\scalebox{0.8}{
+\begin{tabular}{lll}
+\toprule
+\textbf{Prompt} & \textbf{Train Step} & \textbf{GenEval} \\
+\midrule
+User & \multirow{2}{*}{52k} & 45.5 \\
+CHI + User & & 47.7~(+2.2) \\
+\midrule
+User & 140k & 52.8 \\
+CHI + User & ~~+ 5k(ft) & 54.8~(+2.0) \\
+\bottomrule
+\end{tabular}
+}
+\vspace{-1em}
+\end{wraptable}

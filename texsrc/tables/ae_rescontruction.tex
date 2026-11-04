@@ -1,0 +1,23 @@
+\renewcommand{\footnotesize}{\fontsize{8pt}{11pt}\selectfont}
+\begin{wraptable}{r}{0.5\columnwidth}
+    \centering
+    % \vspace{-2em}
+    \caption{Reconstruction capability of different Autoencoders.}
+    \vspace{-3mm}
+    \label{tab:ae_rescontruction}
+    \scalebox{0.7}{
+    \begin{tabular}{lcccc}
+    \toprule
+    \textbf{Autoencoder} & \textbf{rFID}$~\downarrow$ & \textbf{PSNR}$~\uparrow$ & \textbf{SSIM}$~\uparrow$ & \textbf{LPIPS}$~\downarrow$ \\
+    \midrule
+    F8C4~(SDXL)\footnotemark[1] & 0.31 & 31.41 & 0.88 & 0.04 \\
+    F32C64~(SD)\footnotemark[2] & 0.82 & 27.17 & 0.79 & 0.09 \\
+    F32C32~(Ours) & 0.34 & 29.29 & 0.84 & 0.05 \\
+    \bottomrule
+    \end{tabular}
+    }
+    \end{wraptable}
+    
+    \footnotetext[1]{\url{https://huggingface.co/stabilityai/sdxl-vae}}
+    \footnotetext[2]{\url{https://github.com/CompVis/latent-diffusion}}
+    

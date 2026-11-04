@@ -1,0 +1,22 @@
+\begin{table}[th]
+    \centering
+    \caption{\textbf{Comparison of different Text-Encoders.} All models are tested with an A100 GPU with FP16 precision. Gemma-2B models achieve better performance than T5-large at a similar speed 
+    and comparable performance to the larger, much slower T5-XXL.
+    }
+    \vspace{-1em}
+    \label{tab:text_encoder_comparison}
+    \scalebox{0.8}{ 
+    \begin{tabular}{lccccc}
+        \toprule
+        \textbf{Text-Encoder} & \textbf{\#Params~(M)} & \textbf{Latency (s)} & \textbf{FID}~$\downarrow$ & \textbf{CLIP}~$\uparrow$ \\
+        \midrule
+        T5-XXL      & 4762 & 1.61 & 6.1 & 27.1 \\
+        T5-Large    & 341  & 0.17 & 6.1 & 26.2 \\
+        Gemma2-2B   & 2614 & 0.28 & 6.0 & 26.9 \\
+        Gemma-2B-IT & 2506 & 0.21 & 5.9 & 26.8 \\
+        Gemma2-2B-IT& 2614 & 0.28 & 6.1 & 26.9 \\
+        \bottomrule
+    \end{tabular}
+    }
+    \vspace{-0.5em}
+\end{table}
